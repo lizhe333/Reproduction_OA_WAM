@@ -1,0 +1,34 @@
+{
+  "description": "OA-WAM 论文复现工作区 — 多 Agent 协作的机器人操作世界模型项目",
+  "agents": {
+    "directory": ".codex/agents",
+    "roles": {
+      "coordinator": "维护项目状态、阻塞项、handoff 和任务粒度",
+      "paper-spec": "从 LaTeX 提取可执行规格，不写模型实现",
+      "backbone-integration": "对接现有 backbone、reserved token、inputs_embeds、LoRA target",
+      "perception-cache": "定义并实现冻结感知缓存，可先提供 mock cache",
+      "sequence-tokenizer": "实现 slot vector、masked scatter、block causal mask",
+      "model-surgery": "实现 OA key mask、addr reset hook、slot-aware trunk wrapper",
+      "heads-training": "实现 world/action heads、loss、Stage I/II training loop",
+      "eval-ablation": "实现 LIBERO smoke eval、A1/A2/A3/A4 diagnostics",
+      "test-reviewer": "只做 bug/risk/test review，不主动扩大实现范围",
+      "learning-coach": "解释论文和代码，设计练习，反向提问，帮助人类开发者形成自己的理解"
+    },
+    "workflow": {
+      "taskGranularity": "one module per task",
+      "handoffRequired": true,
+      "startupFiles": [
+        "CLAUDE.md",
+        "specs/00-project-status.md",
+        "specs/04-interface-contracts.md"
+      ]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Read(//data/users/lizhe/OA-WAM/**)",
+      "Bash(git:*)"
+    ],
+    "deny": []
+  }
+}

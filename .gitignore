@@ -1,0 +1,39 @@
+# datasets / generated caches / checkpoints
+data/
+datasets/
+cache/
+caches/
+outputs/
+runs/
+wandb/
+checkpoints/
+artifacts/
+
+# model/data blobs
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.hdf5
+*.h5
+*.pkl
+*.npz
+*.npy
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+
+# logs
+*.log
+
+# system/editor
+.DS_Store
+.idea/
+.vscode/
