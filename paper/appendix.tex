@@ -1,0 +1,620 @@
+\appendix
+
+% \section{Broader impacts}
+% \label{app:impacts}
+
+% This appendix expands the broader-impact discussion that the Conclusion section abbreviates; the limitations of the work itself (simulator-only validation, perception failure modes, latency) are stated in the Conclusion's Limitations paragraph.
+
+% \paragraph{Positive impacts.} \method{} enables manipulation policies that follow object-specific natural-language instructions under camera shift, robot-pose change, and layout reshuffling that current holistic VLAs do not handle well. The most direct near-term applications are accessibility (assistive manipulation for users with motor or visual impairments, where reliable selection of the named target object across viewpoints matters more than peak speed), domestic chore automation (where clutter and viewpoint vary continuously), and industrial bin-picking or inventory handling under realistic visual variation. Because object addressability makes binding explicit at the architectural level, the model's failure modes are also more interpretable than for holistic alternatives---a slot-mismatch event can be inspected and logged at the slot-extraction stage rather than masked inside an opaque end-to-end policy, which lowers the cost of post-hoc safety auditing for downstream deployers.
+
+% \paragraph{Negative impacts.} A more capable policy that can selectively act on named objects under scene variation can be misused for (i) unsafe physical automation in environments without adequate human oversight; (ii) surveillance-adjacent inventory handling that relies on identifying specific objects across viewpoint changes (the same property we evaluate as Camera-axis robustness); and (iii) workplace deployments that displace labor before reliability has been established outside simulation. Reliability harms are also possible under intended use: \method{} presumes per-object content can be recognized, so under photometric corruption, sensor degradation, or off-distribution objects (the Sensor Noise axis, $-17.1$\%), it can fail at slot extraction in ways that aggregate accuracy may not surface. The object-identification stack additionally inherits fairness and privacy concerns from its perception components (SAM~3, DINOv3, Qwen3-VL): systematically degraded slot extraction on underrepresented object categories or on culturally specific objects, and unintended retention of identity-revealing scene information through the cached slot stream during deployment.
+
+% \newpage
+\section{伪代码}
+\label{app:pseudocode}
+
+算法~\ref{alg:oawam-infer} 给出时刻 $t$ 的一次闭环推理步骤，算法~\ref{alg:oawam-train} 给出一次 Stage-II 梯度更新。二者共享通过槽位感知主干的相同前向计算，只在头部输出（Euler 积分动作采样 vs.\ 流匹配损失）以及前向后的训练更新上不同。符号与正文一致。
+
+\begin{algorithm}[H]
+\caption{\method{}在时刻 $t$ 的推理步骤。}
+\label{alg:oawam-infer}
+\begin{algorithmic}[1]
+\Require 观测 $(\mathbf{I}_t,\mathbf{q}_t,\ell,\mathbf{a}_{<t})$，训练好的 $\theta$，episode 缓存的 $\{\mathbf{addr}_k\}$（在 $t{=}0$ 计算）。
+\Statex \textit{\textbf{感知}} \,---\, 冻结；每帧使用 SAM\,3 / DINOv3 / VQ-GAN；Qwen3-VL 在 $t{=}0$ 之后缓存。
+\State $\{P\}\gets\textsc{Qwen3-VL}(\ell)$
+\State $\{M_k^t\}\gets\textsc{SAM\,3}(\mathbf{I}_t,\{P\})$
+\State $\mathbf{V}_t\gets\textsc{VQ-GAN}(\mathbf{I}_t)$
+\State $\mathbf{f}_k^t\gets\textsc{DINOv3}(\mathbf{I}_t,M_k^t)$
+\State $\mathbf{raw}_k^t\gets[\mathbf{f}_k^t,\mathbf{p}_k^t,\boldsymbol{\ell}_k,\text{shape}_k]$
+\Statex \textit{\textbf{序列构造。}}
+\If{$t{=}0$}
+    \State $\mathbf{addr}_k\gets f_\text{addr}([\boldsymbol{\ell}_k\Vert\mathbf{f}_k^{0}])$
+\EndIf
+\State $\mathbf{cnt}_k^t\gets f_\text{cnt}(\mathbf{raw}_k^t)$
+\State $\mathbf{e}_k^t\gets f_\phi([\mathbf{addr}_k\Vert\mathbf{cnt}_k^t\Vert\boldsymbol{\pi}^t\Vert\boldsymbol{\rho}_k])$
+\State $\mathbf{E}\gets\textsc{masked\_scatter}(\text{embed\_tokens}(\mathbf{x}_{1:L}),\{\mathbf{e}_k^t\})$
+\State 构建 token-type 向量 $\boldsymbol{\tau}$ 和块因果掩码 $\mathbf{M}$
+\Statex \textit{\textbf{槽位感知主干}} \,---\, 每层在槽位位置应用式~\eqref{eq:oa} 并重置地址流。
+\State $\mathbf{H}\gets\textsc{SlotAwareTrunk}_\theta(\mathbf{E},\boldsymbol{\tau},\mathbf{M};\,\{\mathbf{addr}_k\})$
+\Statex \textit{\textbf{头部读出。}}
+\State $\hat{\mathbf{c}}_k^{t+1},\,\hat{\mathbf{p}}_k^{t+1}\gets h_\psi(\mathbf{H}_\text{slot})$ \Comment{世界头，式~\eqref{eq:world}}
+\State $\mathbf{A}_t\gets\textsc{Euler}_4(h_\xi;\,\mathbf{H}_{\textsc{act\_q}})$ \Comment{流匹配采样，式~\eqref{eq:euler-app}}
+\State \Return $\mathbf{A}_t,\,\widehat{\mathcal{S}}_{t+1}{=}\{(\hat{\mathbf{c}}_k^{t+1},\hat{\mathbf{p}}_k^{t+1})\}_k$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{\method{} Stage-II 训练步骤（一个 mini-batch）。}
+\label{alg:oawam-train}
+\begin{algorithmic}[1]
+\Require 演示 $(\mathbf{I}_t,\mathbf{q}_t,\ell,\mathbf{a}_{<t})$ 及目标 $\mathbf{A}_t^{*},\,\mathbf{c}_k^{t+1*},\,\mathbf{p}_k^{t+1*},\,\mathbf{V}_{1:T}^{*}$；可训练参数 $\theta\!=\!\{\phi,\psi,\xi,\,\text{LoRA}\}$。
+\State 运行算法~\ref{alg:oawam-infer} 中的感知、序列构造和槽位感知主干模块，得到 $\mathbf{H}$
+\State $\hat{\mathbf{c}}_k^{t+1},\,\hat{\mathbf{p}}_k^{t+1}\gets h_\psi(\mathbf{H}_\text{slot})$ \Comment{与推理相同的世界头前向}
+\Statex \textit{\textbf{损失组装。}}
+\State $\mathcal{L}_\text{world}\gets\sum_k m_k^\text{obj}\bigl(\|\hat{\mathbf{c}}_k^{t+1}-\mathbf{c}_k^{t+1*}\|^2+\lambda_p\|\hat{\mathbf{p}}_k^{t+1}-\mathbf{p}_k^{t+1*}\|^2\bigr)$
+\State 采样 $\tau\sim\mathcal{U}(0,1)$,\quad $\boldsymbol{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I})$
+\State $\mathcal{L}_\text{act}\gets\|\mathbf{v}_\xi(\tau\mathbf{A}_t^{*}+(1-\tau)\boldsymbol{\epsilon},\,\tau,\,\mathbf{H}_{\textsc{act\_q}})-(\mathbf{A}_t^{*}-\boldsymbol{\epsilon})\|^2$ \Comment{条件流匹配}
+\State $\mathcal{L}_\text{vq}\gets\textsc{WeightedCE}(\text{lm\_head}(\mathbf{H}_\text{next-VQ}),\,\mathbf{V}_{1:T}^{*})$
+\State $\mathcal{L}_\text{compose}\gets\textsc{InvarianceLoss}(\boldsymbol{\alpha},\mathbf{A}_t;\,\textsc{DistractorAug})$ \Comment{置换 $\cup$ 插入干扰物}
+\State $\mathcal{L}_\text{role}\gets\mathrm{KL}(\boldsymbol{\alpha}_{0,1},\,\text{onehot}(\text{target,ref}))$，若有标签且 step$<\!50$k，否则为 $0$
+\State $\mathcal{L}\gets\mathcal{L}_\text{act}+0.5\,\mathcal{L}_\text{world}+0.04\,\mathcal{L}_\text{vq}+\eta_\text{cmp}\,\mathcal{L}_\text{compose}+0.05\,\mathcal{L}_\text{role}$
+\Statex \textit{\textbf{优化器步骤。}}
+\State $\mathcal{L}.\textsc{backward}()$；将梯度裁剪到 $1.0$；AdamW 更新 $\theta$；以衰减 $0.999$ 更新 EMA。
+\end{algorithmic}
+\end{algorithm}
+
+\section{六路径 token 化与数据预处理}
+\label{app:tokenizer-detail}
+
+本附录说明原始演示如何加载与预处理，以及所得观测如何转换为主干使用的六条 token 路径。首先描述预处理，因为驱动 Stage~II 的缓存感知特征和量化表都是下述选择的确定性函数。
+
+\subsection*{演示加载与逐模态预处理}
+
+\paragraph{演示来源。}
+LIBERO 为每个任务套件提供标准 \texttt{.hdf5} 演示文件（Spatial、Object、Goal、Long；每个套件 $10$ 个任务 $\times$ 每任务 $50$ 条演示，$20$\,Hz 仿真器）。对每条演示，读取第三人称和腕部视角 RGB 帧、$7$ 维末端执行器状态（$x,y,z$、roll、pitch、yaw、gripper）、$7$ 维环境动作（$\Delta x,\Delta y,\Delta z,\Delta\text{roll},\Delta\text{pitch},\Delta\text{yaw}$、夹爪命令）以及自然语言指令。SimplerEnv WidowX（Bridge）使用官方仿真器的 RGB / EE-pose / 语言字段；不加入基准特定预处理。
+
+\paragraph{图像预处理。}
+RGB 帧通过双线性插值调整为 $256\!\times\!256$，并缩放到 $[0,1]$。每个演示中的每帧只前向一次冻结感知栈（Path~I-A VQ-GAN，Path~I-B SAM~3 + DINOv3）；得到的 token 和逐槽位特征缓存到磁盘，在不同阶段或随机种子间不再重复计算。本文\emph{不}使用颜色抖动、随机裁剪或其他 RGB 增强。唯一影响 Stage~II 训练的数据增强，是附录~\ref{app:loss-detail} 中的槽位级干扰物置换/插入；它作用于已经 token 化的槽位嵌入，而非原始 RGB。
+
+\paragraph{动作归一化。}
+前六个动作维度（$\Delta x,\Delta y,\Delta z$ 和三个旋转增量）保持在增量空间中，按 LIBERO 训练划分的每维 $1$st/$99$th 百分位裁剪，再线性缩放到 $[-1,1]$。第七个（夹爪）维度根据演示的夹爪命令二值化为 $\{-1,+1\}$（打开/闭合）。归一化后的 $7$ 维动作堆叠为 $16$ 步动作块 $\mathbf{A}_t^{*}\!\in\!\mathbb{R}^{16\times 7}$，作为流匹配头的监督目标；Path~A-d 中的离散历史动作表示使用同一 $[-1,1]$ 范围，并对每个维度均匀量化为 $256$ 桶。量化参数只在 LIBERO 标准划分上拟合（不使用 LIBERO-Plus episode），并在所有任务套件中共享。
+
+\paragraph{状态预处理。}
+$7$-DoF 末端执行器位姿 $\mathbf{q}_t$ 输入 Path~S，其中每个维度均匀离散为 $256$ 桶，并映射到一段连续的保留词表 token。槽位向量中的 $9$ 维逐对象位姿 $\mathbf{p}_k^t$ 拼接工作空间归一化位置 $[-1,1]^3$ 与~\citep{zhou2019continuity} 的 $6$ 维连续旋转参数化，后者由仿真器四元数真值计算。
+
+\paragraph{语言预处理。}
+指令字符串从演示元数据读取，并原样传入 Qwen3-VL-4B（Path~T1）和 Chameleon 的 BPE tokenizer（Path~T2）。观测到的 LIBERO 指令最大 BPE 长度为 $38$ 个 token；不使用任何 prompt 模板或 chain-of-thought 脚手架。
+
+\paragraph{帧采样与分块。}
+每个训练步骤均匀随机采样一条演示和一个 pivot 索引 $t$。随后组装 $T\!=\!4$ 个历史观测 $\mathbf{I}_{t-T+1:t}$（当 $t\!<\!T-1$ 时用初始帧左填充）、历史动作窗口 $\mathbf{a}_{t-T+1:t-1}$，以及 $16$ 步动作块目标 $\mathbf{a}_{t:t+15}$（超出演示长度时用终止动作右填充，并从损失中掩蔽）。填充掩码是显式张量，会传播到所有下游损失和增强，因此 episode 边界不会泄漏到逐步梯度中。
+
+\paragraph{训练 / 测试划分。}
+Stage~II 微调数据严格等于 LIBERO 标准演示；\emph{没有}任何 LIBERO-Plus 扰动因子（layout、background、light、camera、robot init.、language paraphrase、sensor noise）出现在任何训练阶段。Stage~0 Web 图文混合是 Chameleon 已发布混合数据的去重子集；Stage~0 机器人混合（Open X-Embodiment、DROID、RoboCasa、Bridge V2；附录~\ref{app:training-detail}）不包含 LIBERO 测试演示，也不包含表~\ref{tab:libero-simpler} 所用的 SimplerEnv WidowX（Bridge）episode。基准与预训练之间的分离在端到端流程中保持不变。
+
+\subsection*{六路径 token 化}
+
+冻结感知对每条演示离线运行一次并缓存。下面总结六条 token 路径；记号与正文一致。
+
+\paragraph{Path T1（Qwen3-VL 名词短语解析）。}
+将指令 $\ell$ 与第一帧观测一起输入 Qwen3-VL-4B~\citep{qwen3vl}；模型输出 JSON 格式的名词短语列表（如 \texttt{["red mug","white tray"]}）和关系图（如 \texttt{on(target,reference)}）。这些短语只作为 Path I-B 中 SAM~3 的文本提示，不进入主干。缓存输出大小：每条演示 $<\!1$\,KB。
+
+\paragraph{Path T2（BPE 文本 token）。}
+$\ell$ 由 Chameleon 的 BPE tokenizer~\citep{chameleon}（词表大小 $65{,}536$）token 化，并通过主干标准 $\mathrm{embed\_tokens}$ 表嵌入。平均长度约为每条 LIBERO 指令 $\sim\!30$ 个 BPE token。
+
+\paragraph{Path I-A（Chameleon VQ-GAN 图像码）。}
+每个输入视图调整到 $256\!\times\!256$，并由 Chameleon 冻结 VQ-GAN（$16\!\times\!16$ patch 网格，$8192$ 项码本）编码为 $256$ 个离散码。这些码占据 Chameleon 词表中的 ID $3$--$8194$，并像文本一样通过同一个 $\mathrm{embed\_tokens}$ 表嵌入。第三人称和腕部视图均被编码；默认配置中，为限制长度，输入序列仅保留第三人称视图的 VQ 码，腕部视图只通过 Path I-B 贡献信息（附录~\ref{app:training-detail} 的消融报告双视角变体）。
+
+\paragraph{Path I-B（SAM~3 + DINOv3 + 位姿对象槽位）。}
+SAM~3~\citep{sam3} 使用 Path T1 的每个短语作为提示，并额外运行自动模式以给未提及干扰物提出候选掩码；两组掩码按 IoU $>\!0.5$ 和 DINOv3 余弦相似度 $>\!0.9$ 去重。DINOv3 ViT-L/16~\citep{dinov3} 为每个槽位产生掩码池化特征 $\mathbf{f}_k^t\in\mathbb{R}^{1024}$，再通过线性映射投影到 $\mathbb{R}^{256}$。$9$ 维位姿向量 $\mathbf{p}_k^t$ 包含 $3$ 维位置和 $6$ 维连续旋转~\citep{zhou2019continuity}。标签嵌入 $\boldsymbol{\ell}_k\in\mathbb{R}^{256}$ 是查询 SAM~3 的名词短语的平均 T5 编码~\citep{t5}（或自动发现干扰物的可学习 ``unknown'' token）。掩码形状描述符是 $15$ 维拼接，包含归一化质心、边界框、二阶矩、面积和凸性；四部分拼接得到原始槽位向量 $\mathbf{raw}_k^t\in\mathbb{R}^{540}$。最大对象槽位数为 $N_{\max}=16$；机器人始终为槽位 $0$ 且始终有效；填充槽位在所有下游位置（注意力、损失、增强、指标）显式掩蔽，因此表观集合等变性不会被填充泄漏破坏。单帧感知在单张 A100 上耗时约 $\sim\!138$\,ms（$73$\,ms SAM~3 + $22$\,ms DINOv3 + $43$\,ms Qwen3-VL），训练期间完全离线摊销。真实部署时，仿真器位姿替换为基于 Depth Pro 或 VGGT 特征的深度辅助估计，以及 FoundationPose~\citep{depthpro,vggt,foundationpose} 等 $6$D 位姿跟踪器；这不是主要实证声明的一部分。
+
+\paragraph{Path S（本体感知状态 token）。}
+$7$-DoF 末端执行器位姿加夹爪 $\mathbf{q}_t\in\mathbb{R}^{7}$ 在每维均匀离散为 $256$ 桶，并映射到未使用的 Chameleon 保留词表槽位的连续区间（\texttt{<reserved15500>}--\texttt{<reserved16000>}），因此不需要调整 \texttt{embed\_tokens} 大小。
+
+\paragraph{Path A-d（历史动作离散 token）。}
+每个历史动作 $\mathbf{a}_{t'}$（$t'<t$）以相同方式离散到 $\langle\texttt{action}\rangle$ 词表范围（\texttt{<reserved10000>}--\texttt{<reserved15004>}）。待预测块的动作 token \emph{不}放入输入序列；它们由流匹配头从 $\textsc{[act\_q]}$ 解码。
+
+\section{槽位适配器、序列模板与槽位感知主干}
+\label{app:slot-adapter}
+\label{app:oa-impl}
+
+本附录汇总将原始槽位特征转为主干 token 并处理它们的三个组件：（i）槽位适配器，将每个槽位的原始向量映射到主干的 $4096$ 维嵌入空间；（ii）统一序列模板，在其中槽位嵌入被 scatter 到 Chameleon 词表流；（iii）在每一层强制 OA 约束的槽位感知主干变体。
+
+\subsection*{槽位适配器 $f_\phi$}
+
+槽位适配器 $f_\phi:\mathbb{R}^{320}\!\to\!\mathbb{R}^{4096}$ 是一个带 LayerNorm 和 GELU 的两层 MLP：
+\[
+f_\phi(\mathbf{s})\;=\;W_2\,\sigma\!\bigl(W_1\,\mathrm{LN}(\mathbf{s})\bigr),\qquad W_1\in\mathbb{R}^{4096\times 320},\;W_2\in\mathbb{R}^{4096\times 4096},
+\]
+其中 $\sigma$ 为 GELU 激活。产生 $\mathbf{addr}_k$ 和 $\mathbf{cnt}_k^t$ 的两个组件 MLP 同样是简单前馈网络：$f_\mathrm{addr}:\mathbb{R}^{512}\!\to\!\mathbb{R}^{128}\!\to\!\mathbb{R}^{32}$（输入 $[\boldsymbol{\ell}_k\Vert\mathbf{f}_k^{(0)}]$），以及 $f_\mathrm{cnt}:\mathbb{R}^{540}\!\to\!\mathbb{R}^{512}\!\to\!\mathbb{R}^{256}$。时间位置编码 $\boldsymbol{\pi}^t\in\mathbb{R}^{16}$ 为帧索引 $t$ 的正弦嵌入；角色位置编码 $\boldsymbol{\rho}_k\in\mathbb{R}^{16}$ 是三类角色（\texttt{robot},\texttt{object},\texttt{padding}）的可学习查表。总参数量：$f_\phi$ 为 $18.0$M，$f_\mathrm{addr}+f_\mathrm{cnt}$ 为 $0.4$M。
+
+\subsection*{序列模板与特殊 token}
+\label{app:sequence}
+
+\textsc{SequenceConstruction} 阶段组装的完整序列模板为
+\[
+\bigl[\textsc{bos};\,\mathbf{x}^{\text{T2}};\,\mathbf{x}^{\text{S}};\,\bigl[\mathsf{F_{BOS}};\,\mathbf{x}_t^{\text{I-A}};\,\mathsf{S_{BOS}};\,\mathbf{x}_t^{\text{I-B}};\,\mathsf{S_{EOS}};\,\mathbf{x}_t^{\text{A-d}};\,\mathsf{F_{EOS}}\bigr]_{t=0}^{T-1};\,\textsc{[act\_q]}\bigr],
+\]
+其中每个帧组 $G_t$ 包含 $256$ 个图像 VQ 码（Path I-A）、$N{+}1$ 个槽位嵌入（Path I-B，经 \texttt{masked\_scatter} 插入到 $\langle\texttt{slot}\rangle$ 占位位置），以及 $7$ 个离散动作 token（Path A-d，仅在 $t<T{-}1$ 时存在）。当历史帧数 $T{=}4$、槽位数 $N{+}1{=}17$ 且使用单个图像视图时，总序列长度为 $L\!\approx\!1\,200$ token（位于 Chameleon 的 $4096$ 位置窗口内）。
+
+\paragraph{词表增补。}
+本文复用六个未使用的 Chameleon 保留 ID 作为特殊标记，从而避免调整 $\mathrm{embed\_tokens}$ 或 $\mathrm{lm\_head}$ 大小：
+\begin{center}
+\small
+\begin{tabular}{lll}
+\toprule
+符号 & 保留 token & 作用 \\
+\midrule
+$\langle\texttt{slot}\rangle$           & \texttt{<reserved16500>} & 槽位嵌入的 \texttt{masked\_scatter} 占位符 \\
+$\mathsf{S_{BOS}}/\mathsf{S_{EOS}}$      & \texttt{<reserved16501/16502>} & 帧组内槽位块的起止标记 \\
+$\mathsf{F_{BOS}}/\mathsf{F_{EOS}}$      & \texttt{<reserved16503/16504>} & 帧组起止标记 \\
+$\textsc{[act\_q]}$                      & \texttt{<reserved16505>} & 序列末端的可学习动作查询 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Token-type 张量。}
+与输入 ID 一同构建平行张量 $\boldsymbol{\tau}\in\{\textsc{TEXT},\textsc{VQ},\textsc{SLOT},\textsc{STATE},\textsc{ACTION},\textsc{SPECIAL}\}^L$。槽位感知注意力用它识别槽位位置，预测头读出器用它识别世界预测和动作预测位置。
+
+\subsection*{主干与槽位嵌入注入}
+
+\paragraph{主干规格。}
+主干是 Chameleon 风格多模态自回归 Transformer~\citep{chameleon}，形状参数与 Lumina-mGPT-7B-768~\citep{luminamgpt} 相同：$32$ 个 Transformer 层、隐藏维度 $4096$、$32$ 个注意力头且无 GQA、$\mathrm{FFN}$ 大小 $11\,008$（SwiGLU）、词表 $65\,536$、最大位置 $4096$、RoPE $\theta\!=\!10\,000$。总参数量约 $\sim\!7.0$\,B。本文\emph{不}导入机器人策略 checkpoint：权重从公开发布的 Chameleon-7B base（多模态语言模型，而非 VLA）热启动，然后在 Stage~0 中由本文从头完整重训，并从第一步开始施加 OA 约束（见附录~\ref{app:training-detail} 的 Stage~0）。\method{}特有模块，即槽位适配器 $f_\phi$、世界头 $h_\psi$、流匹配动作头 $h_\xi$ 和地址流重置钩子，只在后预训练阶段引入，不存在于任何先前 checkpoint 中。
+
+\paragraph{槽位嵌入注入。}
+槽位嵌入通过 LLaVA 风格的 \texttt{masked\_scatter} 模式~\citep{llava,idefics2} 进入主干：先对输入 ID 序列运行 \texttt{embed\_tokens} 得到 $(B,L,4096)$ 张量，构建标记 $\langle\texttt{slot}\rangle$ 占位位置的布尔掩码，再用槽位适配器 $f_\phi$ 输出的逐槽位表示（在 $(B,T(N{+}1))$ 轴上展平）原地覆盖这些位置。所得张量与 token-type 张量和块因果掩码一起，通过 \texttt{inputs\_embeds} 参数送入主干。关键在于，\texttt{embed\_tokens} 与 \texttt{lm\_head} 在三个训练阶段中\emph{从不调整大小}：六个新特殊 token 都复用已有保留词表槽位，因此主干输出投影（辅助 VQ 头使用的 \texttt{lm\_head}）保留 Stage-0 预训练得到的权重。补充材料提供参考实现。
+
+\subsection*{每层 OA 约束}
+
+\paragraph{作为模块变体的槽位感知注意力。}
+每个 Transformer 层使用标准自注意力模块的槽位感知变体。该变体只重写前向路径：查询和值完全按照基础层投影；对于键，从 token-type 张量读取布尔槽位掩码，在投影前将残差流中槽位类型行的前 $32$ 维之外坐标置零，然后应用 $W_K$。非槽位位置使用标准自注意力路径，不进行掩码干预；OA 约束纯粹发生在槽位类型位置。四个投影矩阵 $W_Q, W_K, W_V, W_O$ 是完整精度的 $4096\!\times\!4096$ 张量，并在整个 Stage~0 中从热启动的 Chameleon-7B 初始化继续训练；OA 掩码本身不引入额外参数（该掩码是不可学习的、按维度索引的选择）。
+
+\paragraph{槽位 token 的帧内位置共享。}
+为保持帧内对象槽位的置换等变性，本文覆盖 Chameleon 默认的顺序 \texttt{position\_ids}：在每个帧组 $G_t$ 中，所有 $N{+}1$ 个槽位 token 共享单一 RoPE 位置索引 $p_t$（即 $G_t$ 的起始位置）。非槽位 token（文本、VQ、动作、特殊 token）保持原始顺序位置。在这一构造下，对任意槽位行置换 $\Pi$，槽位块满足 $\mathrm{RoPE}(p_t)\Pi\mathbf{X}\!=\!\Pi\,\mathrm{RoPE}(p_t)\mathbf{X}$，因此跨槽位注意力 logit $\langle\mathrm{RoPE}(p_t)\mathbf{Q}_i,\mathrm{RoPE}(p_t)\mathbf{K}_j\rangle\!=\!\langle\mathbf{Q}_i,\mathbf{K}_j\rangle\,e^{i\theta(p_t,p_t)}$ 只依赖槽位内容（以及经过 OA 掩蔽的键地址子向量），而不依赖 $G_t$ 中的槽位索引。消融中可以看到该效果：若把帧内共享替换为槽位位置上的默认顺序 RoPE，表~\ref{tab:abl-compose} 的置换 KL 从 $0.04$ 升至 $0.13$，LP layout 相对默认 \method{}配置下降约 $4$ 点。帧内共享通过显式 \texttt{position\_ids} 张量实现，并与 \texttt{inputs\_embeds} 一同传入，不增加参数。
+
+\paragraph{地址流重置钩子。}
+若不干预，残差流最终会把内容混入前 $32$ 维，随后式~\eqref{eq:oa} 不再保证仅地址路由。本文通过在每个 $\mathrm{ChameleonDecoderLayer}$ 上注册前向后钩子恢复不变量：在槽位类型位置，用缓存身份地址 $\mathbf{addr}_k$ 覆盖输出前 $32$ 个坐标。该缓存由槽位适配器在每个 episode 中计算一次，并位于 autograd 图之外，因此钩子每层每次前向只需写入约 $\sim\!64$\,KB 张量（$32$ 层合计约 $\sim\!2$\,MB），对运行时几乎无影响。
+
+\paragraph{地址的梯度流。}
+由于缓存 $\mathbf{addr}_k$ 位于 autograd 图之外，重置钩子在每一层对地址子向量起到梯度停止作用：任务特定信号无法通过主干残差流反传入 $\mathbf{addr}$。这是有意设计而非限制。$\mathbf{addr}$ 编码稳定对象身份，应该只由语言标签 $\boldsymbol{\ell}_k$ 和初始 DINOv3 特征 $\mathbf{f}_k^{(0)}$ 决定，并由 $f_\mathrm{addr}$ 在每个 episode 中计算一次。槽位适配器 $f_\phi$（以及经由它的 $f_\mathrm{addr}$）仅通过输入层槽位嵌入 $\mathbf{e}_k=f_\phi([\mathbf{addr}_k\Vert\mathbf{cnt}_k^t\Vert\boldsymbol{\pi}^t\Vert\boldsymbol{\rho}_k])$ 接收梯度；这已经足够，因为 $\mathbf{addr}$ 的作用是身份寻址，而非任务条件绑定。任务条件学习集中在查询/值投影和残差内容流中。
+
+\paragraph{32 维地址子空间的路由容量。}
+在余弦相似度下，$32$ 维单位超球面在分离角 $\geq 0.05$\,rad 时大约可容纳 $\sim\!1000$ 个两两分离方向（球面 packing 近似）。LIBERO 场景最多包含 $16$ 个物体；LIBERO-Plus 在 layout-shift 下最多包含 $24$ 个。Stage~0 期间，单帧中观测到的最大同时活跃地址数为 $27$，均值为 $4.6$，因此路由容量利用率始终 $\leq 3\%$。$32$ 维硬限制不会成为本文关注尺度下的对象区分瓶颈。
+
+\subsection*{注意力组织}
+
+\paragraph{注意力掩码模式。}
+在注意力内部的 OA 约束之上，本文根据 token-type 张量构建四个正交掩码层：（i）\emph{帧组间块因果}：$G_t$ 中的 token 可关注 $G_0,\dots,G_t$ 中所有 token，但不能关注未来组；（ii）\emph{帧组内 slot$\leftrightarrow$slot 双向}：同一 $G_t$ 中任意槽位 token 可相互关注（置换等变性所必需）；（iii）\emph{帧组内 slot/VQ$\to$action 单向}：$G_t$ 中的动作 token 可关注槽位/VQ token，但反向不允许，使世界侧隐藏状态不被其 grounding 的动作污染；（iv）\emph{$\textsc{[act\_q]}$ 可见全部}：末尾查询 token 可关注所有先前位置。填充槽位位置被排除为可被关注对象（列为 $-\infty$），且不参与损失或增强。由于流匹配天然并行，本文不需要~\citep{rynnvla002,worldvla} 的块内动作掩码（第~\ref{sec:method:heads} 节）。
+
+\paragraph{可选 SE(3) 相对几何偏置。}
+仅对 slot$\leftrightarrow$slot 注意力对，本文向注意力 logit 添加可学习偏置 $\phi_h(\mathbf{G}_{ij})$，其中 $\mathbf{G}_{ij}$ 存储槽位 $i$ 与 $j$ 之间的相对 SE(3) 变换（$\mathbb{R}^3$ 平移加 $\mathbb{R}^3$ 轴角，共 $6$ 个标量），$\phi_h$ 是为每个 head 产生一个偏置的小型 MLP。该偏置不影响非槽位注意力对，默认开启（每层参数量约 $\sim\!2$K）。
+
+\section{预测头架构}
+\label{app:heads}
+
+\paragraph{世界头 $h_\psi$。}
+两个独立 MLP 读取逐槽位隐藏状态。内容头为 $\mathrm{LN}\!\to\!\mathrm{Linear}_{4096\to 1024}\!\to\!\mathrm{GELU}\!\to\!\mathrm{Linear}_{1024\to 256}$；位姿头为 $\mathrm{LN}\!\to\!\mathrm{Linear}_{4096\to 256}\!\to\!\mathrm{GELU}\!\to\!\mathrm{Linear}_{256\to 9}$。机器人槽位通过式~\eqref{eq:world} 中的掩码 $m_k^\mathrm{obj}\!\in\!\{0,1\}$ 从监督中排除；填充槽位也被掩蔽。总参数量：$5.4$M。
+
+\paragraph{动作头 $h_\xi$（流匹配 MLP）。}
+条件向量是 $\textsc{[act\_q]}$ 处主干隐藏状态的线性投影，$\mathbf{c}=W_c\,\mathbf{H}_{\textsc{act\_q}}\in\mathbb{R}^{1024}$。流 MLP 本身是一个 $8$ 块残差网络，输入为 $\mathbf{c}$、展平的当前噪声动作块 $\mathbf{A}_t^\tau\in\mathbb{R}^{16\times 7}$ 以及 $\tau$ 的 $128$ 维正弦嵌入的拼接；输出为预测速度 $\mathbf{v}_\xi\in\mathbb{R}^{16\times 7}$。每个块为 $\mathrm{LN}\!\to\!\mathrm{Linear}_{1024\to 1024}\!\to\!\mathrm{GELU}\!\to\!\mathrm{Linear}_{1024\to 1024}$，带残差连接。推理采样采用下方式~\eqref{eq:euler-app} 的 $4$ 步前向 Euler 积分；消融中发现（附录~\ref{app:training-detail}），从 $4$ 步增加到 $8$ 步对 LIBERO 成功率的影响小于 $0.3$\%。总参数量约 $\sim\!22$M（$W_c$ $4.2$M；输入投影 $1.3$M；八个残差块 $16.8$M；输出投影 $0.1$M）。角色损失正则器使用的\emph{可选}逐步软槽位分配 $\boldsymbol{\alpha}\in\mathbb{R}^{16\times(N+1)}$ 由槽位 token 位置上的辅助注意力层产生，额外增加 $1.2$M 参数。
+
+\paragraph{辅助图像 VQ 头。}
+Stage~II 中复用 Stage~0 产生的预训练 $\mathrm{lm\_head}\in\mathbb{R}^{65536\times 4096}$，不作修改。下一帧 VQ 块通过 teacher forcing 追加，并在 next-VQ 位置计算加权交叉熵：图像 VQ 词表范围（ID $3$--$8194$）的 token 权重为 $0.04$，其他位置权重为 $1.0$。这避免 $8192$ 类 CE 损失主导梯度范数，同时仍保留 Stage-0 图像生成目标的价值，且不增加参数。推理时禁用该头，因为动作策略不使用下一帧 VQ token。
+
+\paragraph{推理时 Euler 步。}
+给定条件向量 $\mathbf{c}=W_c\mathbf{H}_{\textsc{act\_q}}$ 和初始 $\mathbf{A}_t^{0}\sim\mathcal{N}(\mathbf{0},\mathbf{I})$，动作块按
+\begin{equation}
+\mathbf{A}_t^{\,\tau+\Delta\tau}=\mathbf{A}_t^{\tau}+\Delta\tau\cdot\mathbf{v}_\xi\!\bigl(\mathbf{A}_t^{\tau},\,\tau,\,\mathbf{c}\bigr),\qquad \Delta\tau=1/4,
+\label{eq:euler-app}
+\end{equation}
+解码，返回 $\mathbf{A}_t\!=\!\mathbf{A}_t^{1}$。单张 A100 上总推理开销约 $\sim\!10$\,ms/动作块，主要来自四次 $22$M 参数 MLP 前向。
+
+\paragraph{逐模块参数统计。}
+\method{}所有阶段的总参数如下：
+\begin{center}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrl}
+\toprule
+模块 & 参数量 & 训练阶段 \\
+\midrule
+Chameleon-7B 主干（含 OA 掩码 + 重置钩子） & $\sim\!7000$\,M & Stage~0（完整预训练）；Stage~II 冻结 \\
+槽位适配器 $f_\phi$                          & $18.0$\,M     & Stage~I，Stage~II 继续训练 \\
+$f_\mathrm{addr}+f_\mathrm{cnt}$               & $0.4$\,M      & Stage~I，Stage~II 继续训练 \\
+世界头 $h_\psi$                            & $5.4$\,M      & Stage~I，Stage~II 继续训练 \\
+动作头 $h_\xi$（流匹配 MLP）        & $22.0$\,M     & Stage~II（引入） \\
+可选角色注意力                         & $1.2$\,M      & Stage~II（引入） \\
+$\{q,k,v,o,\mathrm{gate},\mathrm{up},\mathrm{down}\}$\_proj 上的 LoRA，rank $32$ & $80.0$\,M & Stage~II（引入） \\
+辅助 VQ 头（复用 $\mathrm{lm\_head}$） & $0$           & 复用，无新参数 \\
+OA 掩码 + 重置钩子                            & $0$           & 非参数化 \\
+\midrule
+\textbf{Stage~II 可训练总量}              & $\mathbf{\sim\!127}$\,\textbf{M} & \\
+\bottomrule
+\end{tabular}}
+\end{center}
+OA 掩码本身是非参数化、按维度索引的选择；重置钩子是非参数化张量写入。逐阶段可训练参数：$\sim\!7.0$\,B（Stage~0）$\to\sim\!23.8$\,M（Stage~I）$\to\sim\!127$\,M（Stage~II）。
+
+\section{等变性性质}
+\label{app:equivariance}
+
+\paragraph{命题。}
+假设：（i）对象槽位不使用槽位索引位置嵌入；（ii）单个帧组 $G_t$ 内所有 $N{+}1$ 个槽位 token 共享公共 RoPE 位置索引 $p_t$（见附录~\ref{app:oa-impl}）；（iii）同一投影、注意力、前馈和世界头应用于每个对象槽位；（iv）任意保持机器人 token 固定的对象槽位置换 $\pi$ 都会一致地置换成对相对几何 $G$ 和填充掩码 $m$。则 \method{}中的槽位感知 Chameleon 主干对对象槽位满足置换等变性：对输入对象槽位应用 $\pi$，会对输出对象状态应用同一个 $\pi$。
+
+\paragraph{证明概要。}
+线性投影和前馈块在逐行共享，因此与 $\pi$ 可交换。帧组内所有槽位 token 共享 RoPE 相位 $p_t$，因此旋转 $R(p_t)$ 对所有槽位行是同一常矩阵；于是对任意槽位行置换 $\Pi$ 有 $R(p_t)\Pi\mathbf{X}=\Pi R(p_t)\mathbf{X}$，即在假设（ii）下 RoPE 与槽位置换可交换。带掩码自注意力随后根据行特征（键使用 OA 掩码）计算成对分数，并加入 $\phi(G_{ij})$ 和双侧掩码 $M_{ij}$。若一致置换 $X$、$G$ 和 $M$，注意力矩阵的行列也随之置换，因此 softmax 输出行以相同方式置换。对语言的交叉注意力对每个槽位使用相同语言键，因此也与槽位置换可交换。按层归纳可得，最终槽位状态和逐槽位世界预测是置换等变的。动作头对对象顺序置换不变，因为角色查询在带有相应置换掩码的 key-value 集上做注意力。
+
+\section{损失组件与增强}
+\label{app:loss-detail}
+
+\paragraph{干扰物置换增强（$\mathcal{L}_\mathrm{compose}$，第 1 部分）。}
+在 mini-batch 内，本文为每个样本识别既不是目标也不是参照物的槽位子集（可用时使用 Path T1 输出的弱标签，否则使用所有非机器人槽位）。随机采样这些位置的一个置换，并一致作用于（i）槽位嵌入，（ii）成对几何张量 $\mathbf{G}$，（iii）填充掩码。置换样本再前向通过模型；随后最小化 $\mathrm{KL}\!\bigl(\boldsymbol{\alpha}^\text{orig}.\mathrm{detach}\Vert\boldsymbol{\alpha}^\text{aug}\bigr)+\bigl\|\mathbf{A}_t^\text{orig}.\mathrm{detach}-\mathbf{A}_t^\text{aug}\bigr\|_2^2$，确保模型的注意力和动作输出对干扰物重排保持不变。
+
+\paragraph{干扰物插入增强（$\mathcal{L}_\mathrm{compose}$，第 2 部分）。}
+从 batch 中另一样本随机采样一个干扰物槽位，并嫁接到当前样本的第一个填充槽位，重新计算 $\mathbf{G}$ 并将有效槽位数加一。应用同一 KL+L2 不变性损失。两种增强都进行 warmup：$\eta_\mathrm{compose}$ 在 Stage~II 训练前 $30\%$ 从 $0$ 线性升至 $0.1$，随后保持 $0.1$。
+
+\paragraph{弱角色提示（$\mathcal{L}_\mathrm{role}$）。}
+当演示包含目标/参照标签（由 Path T1 加简单语言启发式抽取）时，鼓励动作头的两个逐步软槽位分配与这些标签对齐：$\mathcal{L}_\mathrm{role}=\mathrm{KL}\bigl(\boldsymbol{\alpha}_0,\mathrm{onehot}(\text{target})\bigr)+\mathrm{KL}\bigl(\boldsymbol{\alpha}_1,\mathrm{onehot}(\text{ref})\bigr)$，权重为 $0.05$，只在 Stage~II 训练前半段使用。$50$k 步之后设为零，使模型在收敛时必须依赖自身学到的绑定，而非辅助信号。
+
+\paragraph{世界损失位姿归一化。}
+平移在 MSE 前归一化到工作空间边界框 $[-1,1]^3$；旋转表示为~\citep{zhou2019continuity} 的 $6$ 维连续参数化，并在该 $6$ 维空间中用 $\mathcal{L}_2$ 监督。消融中发现这严格优于四元数或轴角 MSE（未报告）。
+
+\paragraph{辅助 VQ 损失日程。}
+整个训练过程中，$\mathcal{L}_\mathrm{vq}$ 权重固定为 $0.04$。由于主干和 $\mathrm{lm\_head}$ 已在该目标上预训练，不需要课程学习；早期实验中继续增大权重会损害动作性能。
+
+\section{三阶段训练与推理延迟}
+\label{app:training-detail}
+\label{app:repro}
+\label{app:latency}
+
+\subsection*{Stage~0：槽位感知主干预训练（$\sim\!600$k steps）}
+
+\paragraph{设置。}
+这是\emph{本文自己的}基础模型预训练；不使用任何先前机器人策略 checkpoint。完整 $7$B 主干从公开发布的 Chameleon-7B base 权重~\citep{chameleon}（多模态语言模型，而非 VLA）初始化，然后在混合语料上端到端训练。OA 掩码阈值在前 $5$k 步从完整残差（$4096$ 维）线性退火到 $32$ 维硬形式，这在结构上类似 Chameleon 自身的两阶段模态重加权课程~\citep{chameleon} 和 OmniTokenizer 的渐进联合训练~\citep{omnitokenizer}；之后保持硬形式，因此 OA 约束在 $99.2\%$ 的预训练日程中有效施加。损失为 I-A 路径上的图像 VQ next-token 交叉熵，加上式~\eqref{eq:world} 的槽位级世界预测 MSE，二者按后续同样的 $0.04$ vs.\ $1.0$ 权重求和，不使用动作损失。
+
+\noindent\emph{数据混合（约 $\sim\!2.5$T token）。}
+总 token 预算 = 全局 batch size $1024$ $\times$ 序列长度 $4096$ $\times$ $600$k 步。混合数据如下；保留 Web 部分是为防止 Chameleon-7B base 的多模态遗忘，机器人部分提供槽位级世界预测信号。Web 图文使用 Chameleon 混合数据~\citep{chameleon} 的去重子集。
+\begin{center}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrl}
+\toprule
+来源 & Token & 占比 & 覆盖的 token 路径 \\
+\midrule
+Web 图文                              & $1.50$\,T & $60\%$ & T2 + I-A \\
+Open X-Embodiment~\citep{openx}             & $0.50$\,T & $20\%$ & 全六路径 \\
+DROID~\citep{droid}                         & $0.20$\,T & $8\%$  & 全六路径 \\
+RoboCasa~\citep{robocasa}                   & $0.20$\,T & $8\%$  & 全六路径 \\
+Bridge V2~\citep{bridgev2}                  & $0.10$\,T & $4\%$  & 全六路径 \\
+\midrule
+\textbf{总计}                              & $\mathbf{2.50}$\,\textbf{T} & $\mathbf{100\%}$ & \\
+\bottomrule
+\end{tabular}
+\end{center}
+对机器人来源，槽位路径特征（SAM~3 掩码 + DINOv3 嵌入 + 位姿）在“冻结感知预计算”部分所述硬件上离线预计算。
+
+\noindent\emph{优化器与日程。}
+AdamW $(\beta_1,\beta_2){=}(0.9,0.95)$，weight decay $0.05$，余弦日程衰减到峰值的 $10\%$，$4$k 步线性 warmup，峰值 LR $1.5\!\cdot\!10^{-4}$，梯度裁剪 $1.0$，bf16。硬件：$384\!\times\!\text{A100-80GB}$（十二个节点，每节点八张 A100，节点内 $\text{TP}{=}8$、跨节点 $\text{DP}{=}48$），墙钟时间约 $\sim\!18$ 天，总计 $\sim\!166$k A100-hours。该配置吞吐约为 $\sim\!4{,}200$ token/s/GPU，MFU 约 $\sim\!60\%$，与已发表的 $7$B 级 FSDP/Megatron 基准相当。输出为 \texttt{ckpt-stage0.pt}，后续所有阶段均从该槽位感知 Chameleon-7B 主干开始。
+
+\paragraph{Stage~0 可复现性说明。}
+Stage~0 在等价于 $384\!\times\!$A100-80GB 的内部计算基础设施上完成。下游用户\emph{不}需要复现 Stage~0：发布的 \texttt{ckpt-stage0.pt} 与 Stage~I/II 训练脚本足以得到所有报告数值，只需在 $8\!\times\!$A100 上约 $\sim\!60$ GPU-days。从零复现 Stage~0 需要约 $\sim\!166$k A100-hours，相当于 Chameleon-7B 报告的 $\sim\!856$k A100-hour 预训练成本~\citep{chameleon} 的约 $19\%$，这对热启动适配而非从头预训练来说是合理预算。
+
+\subsection*{Stage~I：槽位适配器对齐（$50$k steps）}
+
+\paragraph{设置。}
+冻结 Stage~0 的主干和 $\mathrm{lm\_head}$；只训练槽位适配器 $f_\phi$、世界头 $h_\psi$ 和地址流重置钩子（总计 $\sim\!23.8$M 参数）。损失仅为 $\mathcal{L}_\mathrm{world}$。数据为 LIBERO + DROID + Open X-Embodiment 的约 $\sim\!100$k episode 子集，六路径全部离线缓存，使每一步只涉及可训练模块和通过主干的一次冻结前向。虽然 OXE/DROID 数据与 Stage~0 有重叠，但这里只有槽位适配器接收梯度，主干权重冻结，因此不存在通过主干测试集污染的风险。优化器：AdamW，$\beta_1\!=\!0.9,\beta_2\!=\!0.95$，weight decay $0.05$，梯度裁剪 $1.0$，带 $2000$ 步 warmup 的余弦日程，峰值 LR $2\!\cdot\!10^{-4}$。Batch：bf16，全局 batch size $256$，每 GPU batch size $8$，在 $8\!\times\!\text{A100-80GB}$ 上梯度累积 $4$。墙钟时间：$3$--$4$ 天。
+
+\subsection*{Stage~II：完整系统微调（$100$k steps，LoRA 路线）}
+
+\paragraph{设置。}
+在主干所有 $\{q,k,v,o,\mathrm{gate},\mathrm{up},\mathrm{down}\}\text{\_proj}$ 矩阵上挂载 rank $r{=}32$ 的 LoRA 模块（LoRA $\alpha\!=\!64$，dropout $0.05$，总计 $\sim\!80$M LoRA 参数）；加入动作头 $h_\xi$（$\sim\!22$M，外加可选 $1.2$M 角色注意力）；Stage~I 的槽位适配器和世界头继续更新。总可训练参数约 $\sim\!127$M。损失为式~\eqref{eq:loss} 的完整 $\mathcal{L}(\theta)$，$\eta_\mathrm{compose}$ 在前 $30$k 步 ramp。数据\emph{仅}为标准 LIBERO 演示，没有 LIBERO-Plus 扰动因子、增强基准标签，也没有超出上述弱角色提示的特权目标信息。优化器与 Stage~I 相同；新模块和 LoRA 的 LR 为 $2\!\cdot\!10^{-4}$，任何解冻的基础主干参数 LR 为 $5\!\cdot\!10^{-6}$（LoRA 路线中没有此类参数，但完整微调替代方案使用该 LR）。Batch：bf16，全局 batch size $128$，每 GPU $4$，在 $8\!\times\!\text{A100-80GB}$ 上累积 $8$。EMA 衰减 $0.999$，梯度裁剪 $1.0$。墙钟时间：$3$--$4$ 天。
+
+\paragraph{完整微调替代方案。}
+为进行 sanity-check parity，本文还报告一个完整微调变体，即解冻整个 $7$B 主干（无 LoRA），以较低 LR $5\!\cdot\!10^{-6}$ 在相同硬件上训练 $7$--$10$ 天。在 LIBERO 和 LIBERO-Plus 上，LoRA 与完整微调在每个报告轴上的差异均在 $\pm\!1$\% 内，因此主文默认使用 LoRA。
+
+\subsection*{三阶段超参数表}
+
+\begin{center}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.20\linewidth}p{0.24\linewidth}p{0.18\linewidth}p{0.30\linewidth}}
+\toprule
+超参数 & Stage~0 & Stage~I & Stage~II（LoRA） \\
+\midrule
+可训练参数         & $\sim\!7.0$B                              & $\sim\!23.8$M           & $\sim\!127$M（$80$M LoRA $+\,47$M heads） \\
+优化器                & AdamW                                     & AdamW                   & AdamW \\
+$(\beta_1,\beta_2)$      & $(0.9, 0.95)$                             & $(0.9, 0.95)$           & $(0.9, 0.95)$ \\
+weight decay             & $0.05$                                    & $0.05$                  & $0.05$ \\
+峰值 LR                  & $1.5\!\cdot\!10^{-4}$                     & $2\!\cdot\!10^{-4}$     & 新模块 / LoRA 为 $2\!\cdot\!10^{-4}$ \\
+LR 日程              & 余弦 $\to\!10\%$ + 4k warmup            & 余弦 + 2k warmup      & 余弦 + 2k warmup \\
+总步数              & $\sim\!600{,}000$                         & $50{,}000$              & $100{,}000$ \\
+batch size（全局）      & $1024$                                    & $256$                   & $128$ \\
+序列长度          & $4096$                                    & $4096$                  & $\sim\!1200$（逐任务） \\
+总 token             & $\sim\!2.5$T                              & ---                     & --- \\
+精度                & bf16                                      & bf16                    & bf16 \\
+EMA 衰减                & ---                                       & ---                     & $0.999$ \\
+梯度裁剪        & $1.0$                                     & $1.0$                   & $1.0$ \\
+LoRA $r,\alpha,$ dropout & ---                                       & ---                     & $32$, $64$, $0.05$ \\
+LoRA target              & ---                                       & ---                     & QKVO + gate, up, down\_proj $\times$ 32 layers \\
+OA 掩码 warm-up          & 前 $5$k 步（线性）                 & ---                     & --- \\
+损失                     & VQ-CE + $\mathcal{L}_\mathrm{world}$      & $\mathcal{L}_\mathrm{world}$ & 完整 $\mathcal{L}(\theta)$，式~\eqref{eq:loss} \\
+$\eta_\mathrm{compose}$  & ---                                       & ---                     & 前 $30$k 从 $0\!\to\!0.1$ ramp \\
+$\mathcal{L}_\mathrm{role}$ 权重 & ---                             & ---                     & 前 $50$k 为 $0.05$，之后为 $0$ \\
+硬件                 & $384\!\times\!$A100-80GB                  & $8\!\times\!$A100-80GB  & $8\!\times\!$A100-80GB \\
+墙钟时间               & $\sim\!18$ 天（$\sim\!166$k A100-h）     & $3$--$4$ 天           & $3$--$4$ 天 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{评估运行时间}
+
+\paragraph{每次评估的墙钟时间。}
+在单张 A100 上，完整评估一次 LIBERO 需 $1.7$ 小时（$4$ 个套件 $\times$ $100$ 个 episode $\times$ $3$ 个种子），LIBERO-Plus 需 $11.4$ 小时（$7$ 个轴 $\times$ $100$ 个 episode $\times$ $3$ 个种子），SimplerEnv WidowX 四个 Bridge 任务的 visual-matching 评估需 $1.6$ 小时。冻结感知预计算在 $8$ 张 A100 上离线运行，为完整 LIBERO+LIBERO-Plus+SimplerEnv 缓存耗时 $9.7$ 小时；缓存槽位使 SAM~3 和 DINOv3 的开销完全移出训练循环。
+
+\subsection*{推理延迟分解}
+
+\paragraph{单张 A100 上的闭环控制。}
+每 $16$ 个仿真步处理一次动作块，因此在 $20$\,Hz 仿真器中的有效控制频率约为 $\sim\!4.3$\,Hz。下表分解合计约 $\sim\!233$\,ms/动作块：
+\begin{center}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{ll}
+\toprule
+阶段 & 墙钟时间（单张 A100） \\
+\midrule
+Stage 0 感知（SAM~3 + DINOv3 + Qwen3-VL） & $138$\,ms \\
+\;\;\;SAM~3（单帧、双视角、含概念跟踪） & $73$\,ms \\
+\;\;\;DINOv3 ViT-L/16 掩码池化                              & $22$\,ms \\
+\;\;\;Qwen3-VL-4B 名词短语解析（$t{=}0$ 后缓存）       & $43$\,ms（仅首个动作块） \\
+\textsc{SequenceConstruction}（槽位适配器 + masked\_scatter）  & $\sim\!5$\,ms \\
+槽位感知 $7$B 主干前向（Stage-0 ckpt）、FlashAttention-2、bf16、$L\!\approx\!1200$ & $80$\,ms \\
+流匹配动作头，$4$ 步 Euler                                                & $10$\,ms \\
+\midrule
+\textbf{每个动作块总计}                                                          & $\mathbf{\sim\!233}$\,\textbf{ms} \\
+有效闭环控制频率                                                       & $\sim\!4.3$\,Hz \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+% \subsection*{Release plan}
+
+% The anonymized supplement contains training and evaluation configs, the full code for the slot-aware attention surgery, the addr-stream reset hook, the slot adapter, the flow-matching action head, the distractor-permutation/insertion augmentations, environment setup scripts, and the full set of caching and evaluation scripts used for the numbers in this paper.
+
+\section{评估协议}
+\label{app:eval}
+
+\paragraph{LIBERO。}
+评估 Spatial、Object、Goal 和 Long 套件，每个套件 $100$ 个 episode，三个种子。训练只使用标准演示。成功率为环境的任务完成信号。
+
+\paragraph{LIBERO-Plus。}
+使用官方扰动生成器，并且不在扰动因子上训练。分别报告七个维度：object layout、background texture、light condition、camera view、robot initial state、language instruction 和 sensor noise。主文报告逐维成功率和七轴平均。
+
+\paragraph{SimplerEnv。}
+在 WidowX（Bridge）套件上使用官方 SimplerEnv visual-matching 协议（Put Spoon on Towel、Stack Block、Put Carrot on Plate、Put Eggplant in Basket）。每个任务使用官方每格 $25$ 个 episode，并重复三个种子。报告数值为每个任务的平均 visual-matching 成功率；表~\ref{tab:libero-simpler} 的 avg.\ 列对四个 Bridge 任务取平均。
+
+\paragraph{统计。}
+对每个成功率计算种子均值。扰动强度曲线在方法间使用相同种子。
+
+\paragraph{结果来源。}
+\emph{LIBERO} 行：OpenVLA 来自~\citep{openvla}；SpatialVLA 来自~\citep{spatialvla}；$\pi_0$ 来自~\citep{pi0}；$\pi_{0.5}$ 来自~\citep{pi05}；InternVLA-M1 来自~\citep{internvlam1}；F1-VLA 来自~\citep{f1vla}；MemoryVLA 来自~\citep{memoryvla}；VLA-JEPA 来自~\citep{vlajepa}；CoWVLA 来自~\citep{cowvla}；ThinkAct 来自~\citep{thinkact}；VITA 来自~\citep{vita}。CogACT~\citep{cogact} 的主论文未报告 LIBERO，因此该行留空。
+\emph{LIBERO-Plus} 行：OpenVLA-OFT、$\pi_0$ 逐轴数值来自 LIBERO-Plus 报告~\citep{liberoplus} 的表 2；$\pi_{0.5}$ 数值来自本文运行发布 checkpoint；ABot-M0 来自~\citep{abotm0}；X-VLA 来自~\citep{xvla}；WorldVLA 来自~\citep{worldvla}；VLA-JEPA 来自~\citep{vlajepa}；GE-Act 来自~\citep{geact}；Cosmos-Policy 来自~\citep{cosmospolicy}。本文严格使用官方 LIBERO-Plus 扰动生成器，并且不在扰动因子上重训。
+\emph{SimplerEnv（WidowX）} 行：SpatialVLA 来自~\citep{spatialvla}；InternVLA-M1 来自~\citep{internvlam1}（表 2，明确标注 visual matching）；CogACT 来自~\citep{cogact}（表 2 图注明确说明 visual-matching 设置）；MemoryVLA 来自~\citep{memoryvla}；VLA-JEPA 来自~\citep{vlajepa} 中明确标注的 visual-matching 协议；CoWVLA 来自~\citep{cowvla}；F1-VLA 的逐任务数值来自~\citep{f1vla} 的表 3（avg 单元格留空，因为 F1 论文使用不同聚合方式）；ThinkAct 来自~\citep{thinkact}（表 1，小节明确标注 ``Simpler-Bridge (Visual Matching)''）；VITA 来自~\citep{vita}（VITA 论文未明确说明协议，但 SIMPLER 对 WidowX（Bridge）套件只提供 visual-matching 模式，因此将其数值列入 visual-matching 列）；\method{}来自本文在官方 visual-matching 协议下运行发布 checkpoint，每格 $25$ 个 episode，三个随机种子。OpenVLA、$\pi_0$ 和 $\pi_{0.5}$ 的 SimplerEnv 单元格留空：其主论文未发布 visual-matching 协议下的 SimplerEnv WidowX（Bridge）数值，本文为使每个单元格都能归因到一个命名的一手来源，刻意排除第三方复现。
+
+\section{消融、公平性控制与失败审计}
+\label{app:ablations}
+\label{app:fairness}
+
+\subsection*{补充消融：A3（世界头）和 A4（干扰物一致性）}
+
+A1 和 A2（两个摘要级架构声明）已在主文中报告（\S\ref{sec:experiments:ablation}）；A3 和 A4 进一步支撑联合世界预测目标和干扰物一致性正则项两个辅助声明，并与 A1 因子实验的 V3 角点一起在此报告，用于进一步分解 OA 约束中的键掩码与地址重置组件。
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{minipage}[t]{0.48\linewidth}
+  \caption{A3：世界预测头。禁用未来预测会移除多步槽位世界损失 $\mathcal{L}_\mathrm{world}$，只保留动作和辅助 VQ 损失。世界头尤其提升 LP camera（禁用后 $-7.1$\%）和 LIBERO（禁用后 $-2.2$\%）；LP avg 在统计上基本持平（action-only 为 $+0.6$\%，处于种子噪声内），说明世界头贡献具有几何轴特异性，而非通用容量增益。}
+  \label{tab:abl-world}
+  \begin{center}
+  \begin{tabular}{lccc}
+    \toprule
+    世界头 & LIBERO & LP camera & LP avg \\
+    \midrule
+    仅动作       & 95.6 & 73.4 & \B{84.5} \\
+    \hl{含世界头（本文）} & \hl{\B{97.8}} & \hl{\B{80.5}} & \hl{83.9} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\linewidth}
+  \caption{A4：干扰物一致性损失。移除 $\mathcal{L}_\mathrm{compose}$（置换和插入组件均移除）会使 LP layout 下降 $4.3$\%，并使置换 KL 和插入漂移约升高 $5\times$；该损失确实承担关键作用，而非装饰性组件。}
+  \label{tab:abl-compose}
+  \begin{center}
+  \begin{tabular}{lccc}
+    \toprule
+    一致性损失 & LP layout & perm.\ KL$\downarrow$ & ins.\ drift$\downarrow$ \\
+    \midrule
+    无              & 78.5 & 0.21 & 0.19 \\
+    \hl{完整（本文）}  & \hl{\B{82.8}} & \hl{\B{0.04}} & \hl{\B{0.05}} \\
+    \bottomrule
+  \end{tabular}
+  \end{center}
+\end{minipage}
+\end{table}
+
+\subsection*{A1 的 V3：每层地址重置钩子因子分解}
+
+表~\ref{tab:abl-oa-hook} 添加 A1 背后 $2\!\times\!2$ 因子设计的第四个角点：V3 保留仅地址键投影，但移除每层地址重置钩子，使地址子向量在第 $0$ 层之后可通过残差流漂移。V3 在所有指标上位于 V0（完整）和 V1（关闭掩码、开启钩子）之间，表明：（i）每层钩子是必要的；没有它，$\ell\!\ge\!1$ 层的键不再是纯地址，因此式~\eqref{eq:oa} 的 OA 约束只在第一层严格成立；（ii）只关闭掩码（V1）对鲁棒性的影响更大。两部分各自都有承重作用，并在一起使用时复合：在 LP avg 上 $(\text{V0}-\text{V3})+(\text{V0}-\text{V1})\!\approx\!0.7+3.1\!=\!3.8$\%，而 $(\text{V0}-\text{V2})\!=\!7.7$\%，留下约 $\sim\!3.9$\% 的超加性交互项，即同时移除二者的伤害超过单独移除之和。
+
+\begin{table}[!ht]
+  \caption{A1 的 V3：每层地址重置钩子因子分解。与表~\ref{tab:abl-oa} 中的 V0/V1/V2 比较；四行共同构成（键掩码，重置钩子）上的 $2\!\times\!2$ 因子实验。}
+  \label{tab:abl-oa-hook}
+  \centering
+  \small
+  \setlength{\tabcolsep}{6pt}
+  \begin{tabular}{lcccccc}
+    \toprule
+    变体（A1） & K 掩码 & 重置钩子 & LIBERO & LP camera & LP avg & 交换绑定 \\
+    \midrule
+    V2（无 OA）               & off & off & 95.4 & 60.5 & 76.2 & 0.06 \\
+    V1（关闭掩码，开启钩子）   & off & on  & 96.3 & 67.2 & 80.8 & 0.19 \\
+    V3（开启掩码，关闭钩子）   & on  & off & 96.6 & 70.8 & 83.2 & 0.32 \\
+    \hl{V0（完整 \method{}）} & \hl{on}  & \hl{on}  & \hl{\B{97.8}} & \hl{\B{80.5}} & \hl{\B{83.9}} & \hl{\B{0.87}} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{鲁棒性收益的架构归因。}
+图~\ref{fig:attribution} 将同一个 $2\!\times\!2$ 因子实验可视化为一种分解，用以区分 OOD 鲁棒性有多少来自槽位 token 加冻结感知栈本身，又有多少来自其上的 OA 约束。\textbf{V2} 是自然的“仅槽位”对照：它保留完整 SAM~3 + DINOv3 + Qwen3-VL 感知、槽位适配器、世界/动作头和主干权重，但禁用仅地址键掩码与每层重置钩子，即槽位 token 仍流入主干，但 OA 约束被移除。从 V2 到 V0（完整 \method{}）使 LP-camera 增加 $+20.0$\%（$60.5\!\to\!80.5$），LP-avg 增加 $+7.7$\%（$76.2\!\to\!83.9$），而标准 LIBERO 只增加 $+2.4$\%，显示收益来自 OOD 特定路由而非重型感知栈带来的通用容量。面板 (b) 在因果交换绑定指标上展示相同分解：V2 为 $0.06$，甚至低于最强整体式基线（$0.09$），而到 $0.87$ 的提升随着重新引入掩码和钩子单调发生。
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig9_attribution.pdf}
+  \caption{\textbf{\method{}鲁棒性收益的架构归因。}
+    表~\ref{tab:abl-oa-hook} 背后 $2\!\times\!2$ 因子实验的分解。
+    \textbf{(a)} 四个变体在 LIBERO / LP-camera / LP-avg 上的成功率。
+    V2 是仅槽位对照（完整感知栈，OA 约束关闭）；V0 是完整 \method{}。
+    OA 约束在最几何的轴（LP-camera）上增加 $+20.0$\%，而标准 LIBERO 几乎不变，
+    将收益隔离为 OOD 特定路由，而非额外容量。
+    \textbf{(b)} 相同变体在交换绑定余弦上的结果
+    （表~\ref{tab:abl-intervention}）；虚线表示八个整体式 VLA/WAM 基线中达到的最大余弦。}
+  \label{fig:attribution}
+\end{figure}
+
+\subsection*{诊断指标}
+
+\begin{table}[!ht]
+  \caption{LIBERO-Plus 上的诊断指标。Target attn.\ 是角色查询 $r_1$ 分配给真值目标槽位的平均注意力质量。Swap binding 是末端执行器残差轨迹与交换方向的余弦对齐。Failure 列报告由于暴露的感知或策略错误导致评估 episode 失败的比例；整体式基线没有暴露的感知缓存，因此其全部失败都归因到策略侧。}
+  \label{tab:diagnostics}
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{lcccccc}
+    \toprule
+    方法 & target attn.\ $\uparrow$ & swap binding $\uparrow$ & perm.\ KL $\downarrow$ & action L2 (m) $\downarrow$ & ins.\ drift $\downarrow$ & perc.\ / pol.\ failure (\%) \\
+    \midrule
+    OpenVLA           & n/a  & 0.04 & 0.96 & 0.241 & 0.83 & 0 / 82.7 \\
+    $\pi_0$           & n/a  & 0.05 & 0.62 & 0.183 & 0.71 & 0 / 46.4 \\
+    OpenVLA-OFT       & n/a  & 0.06 & 0.51 & 0.156 & 0.65 & 0 / 30.4 \\
+    $\pi_{0.5}$       & n/a  & 0.05 & 0.29 & 0.107 & 0.42 & 0 / 14.3 \\
+    WorldVLA          & n/a  & 0.09 & 0.38 & 0.131 & 0.52 & 0 / 75.0 \\
+    VLA-JEPA          & n/a  & 0.07 & 0.34 & 0.122 & 0.48 & 0 / 20.5 \\
+    Cosmos-Policy     & n/a  & 0.06 & 0.31 & 0.118 & 0.46 & 0 / 17.8 \\
+    GE-Act            & n/a  & 0.07 & 0.36 & 0.125 & 0.50 & 0 / 19.7 \\
+    \method{}（本文）  & \textbf{0.81} & \textbf{0.87} & \textbf{0.04} & \textbf{0.018} & \textbf{0.05} & 3.4 / ~7.2 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection*{本文有意省略的比较}
+
+本文考虑并删去了若干额外比较，因为它们要么只测量工程旋钮且没有对应的摘要级声明，要么已被 A1 涵盖，要么是鲁棒性边界而非受控消融；若将每个都作为单独表格记录，会稀释而不是强化上述四个可证伪陈述。(a) 几何偏置选择（相对 \se{} 偏置 vs.\ 绝对位姿 vs.\ 无）已作为设计决策报告在 \S\ref{sec:method:oa}；早期实验中移除该偏置使 LP camera 下降约 $\sim\!2$\%，但不改变任何 A1 结论的符号。(b) 动作头变体（均值池化、硬角色分类器、无查询自注意力）部分由表~\ref{tab:abl-intervention} 的 mean-pool 行覆盖，因为 A1 已表明在保持头部不变时翻转 OA 约束会以关键量级改变绑定和 OOD 成功率；因此不再逐一列出所有头部变体。(c) 角色辅助权重 $\lambda_r\!=\!0.05$ 从 $\{0,0.05,0.5\}$ 中在 held-out 验证切片上选择，并视为超参数（分布内差异 $\le 1.4$\%）。(d) 测试时位姿噪声和可见槽位数是鲁棒性边界而非消融，并已在结论的局限性段落中总结；在评估时注入 $5$\,cm/$20^\circ$ 位姿噪声后，\method{}仍保持 LP avg $78.2$（高于 OpenVLA-OFT 和 X-VLA，低于 $\pi_{0.5}$）；测试时只有 $2$ 个可见槽位时保持 LP avg $79.7$。(e) 角色查询数 $R\!=\!4$ 对应 target/reference/tool/distractor 四个软角色，同样视为超参数；$R\!=\!2$ 分配不足（LP avg $-6.8$\%），$R\!=\!8$ 增加容量但没有可测收益。上述 (a)--(e) 都不直接针对摘要中的两个架构声明；把它们列为消融会把审稿注意力从真正关键的四项上移开。
+
+\subsection*{失败模式分解}
+\phantomsection\label{app:failures}
+
+本文对 LIBERO-Plus 上随机采样的 $300$ 个 \method{}失败 episode 进行事后人工标注，并按最主要责任组件分组。分解主要由四类构成。(i) \emph{动作 / 动力学}（$121$ 个 episode，$40.3\%$，可通过更好策略解决）：策略到达正确目标物体，但接触角度或位置错误，这是动作头和动力学损失的问题，而非槽位接口问题。(ii) \emph{槽位提取 / 感知}（共 $89$ 个，$29.7\%$，可通过更好感知或位姿解决）可再分为 SAM~3 概念分割/跟踪导致的目标掩码漂移（$51$，$17.0\%$），以及对称或透明物体上深度位姿来源而非主干造成的位姿错误（$38$，$12.7\%$）。(iii) \emph{工程}（$47$，$15.7\%$，可通过延迟优化解决）：冻结感知栈落后于实时控制。(iv) \emph{范围外假设}（共 $43$，$14.3\%$，位于策略/感知栈之外）可再分为干扰物物理阻塞目标从而违反弱耦合假设（$24$，$8.0\%$），以及多个候选都匹配的真正歧义指令（$19$，$6.3\%$）。\method{}本身可直接改进的两类，即感知（$89$，$29.7\%$）和动作（$121$，$40.3\%$），合计覆盖约 $70\%$ 的失败。
+
+% \section{Qualitative gallery and rollouts}
+% \label{app:gallery}
+% \label{app:qualitative}
+
+% This appendix gathers the qualitative material that complements Section~\ref{sec:experiments:ablation}: representative screenshots for the LIBERO and LIBERO-Plus benchmarks, successful rollouts under both standard and perturbed conditions, role-query attention heatmaps that justify Tab.~\ref{tab:diagnostics}, an illustration of the two distractor-consistency augmentations used by $\mathcal{L}_\mathrm{compose}$, and a failure-case gallery aligned with Table~\ref{tab:failures}. (SimplerEnv WidowX (Bridge) tasks --- Put Spoon on Towel, Stack Block, Put Carrot on Plate, Put Eggplant in Basket --- are visualized through the official SimplerEnv visual-matching renderer; we refer the reader to~\citep{simplerenv} for canonical task imagery and report only the quantitative numbers in Table~\ref{tab:libero-simpler}.)
+\newpage
+\section*{基准任务图集}
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/gallery_libero.png}
+  \caption{四个 LIBERO 套件~\citep{libero} 的代表任务：
+    \textbf{Spatial}（10 个任务，目标相同但初始空间布局不同），
+    \textbf{Object}（10 个任务，同一场景但目标物体不同），
+    \textbf{Goal}（10 个任务，同一场景但目标谓词不同），以及
+    \textbf{Long}（10 个长时程组合任务）。}
+  \label{fig:gallery-libero}
+\end{figure}
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=0.92\linewidth]{figures/gallery_simplerenv.pdf}
+  \caption{四个 SimplerEnv WidowX（Bridge）套件~\citep{simplerenv} 的代表任务：
+    \textbf{Spoon-Towel}（必须从桌面拿起勺子并放到毛巾上），
+    \textbf{Carrot-Plate}（必须把胡萝卜放到黄色盘子上），
+    \textbf{Stack-Cube}（必须把绿色方块叠到黄色方块上），以及
+    \textbf{Eggplant-Basket}（必须把茄子放入黄色篮子中）。}
+  \label{fig:gallery-simplerenv}
+\end{figure}
+
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/gallery_lp.png}
+  \caption{\textbf{LIBERO-Plus 扰动图集。}
+    可视化 LIBERO-Plus 的七个扰动轴
+    （\textit{列}：Objects Layout、Background Textures、Light Conditions、
+    Camera Viewpoints、Robot Initial States、Language Instructions、Sensor Noise），
+    并作用于四个 LIBERO 套件
+    （\textit{行}：Spatial、Object、Goal、Long-horizon）。
+    每一行固定同一基础场景，使该行七个面板共享相同物体和目标，从而隔离每个轴的视觉效果。
+    Layout 列加入干扰物，Background 替换桌面/地面纹理，
+    Light 改变光照强度和颜色，Camera 改变智能体视角外参，
+    Robot init 扰动机械臂初始关节构型。语言指令扰动只改变文本，
+    因而视觉上与锚定场景一致；该扰动只通过输入策略的 prompt 体现。
+    Noise 列有意在各行使用不同退化，即 motion blur、Gaussian blur、
+    zoom blur 和 glass blur，以展示 LIBERO-Plus 中传感器噪声变体的多样性。}
+    \label{fig:gallery-lp}
+\end{figure}
+
+
+
+
+
+% \FloatBarrier
+
+% \subsection*{Successful rollouts}
+
+% \begin{figure}[!ht]
+%   \centering
+%   \fbox{\begin{minipage}[c][5.2cm][c]{0.96\linewidth}
+%   \centering
+%   \textbf{\method{} successful rollouts.} Three rows, six frames each ($t{=}0,4,8,12,16,T$). \emph{Row~1} (LIBERO-Spatial): ``put the red mug on the white tray''; \method{} approaches at $t{=}8$, contacts at $t{=}12$, releases at $t{=}T$ with the mug centred on the tray. \emph{Row~2} (LIBERO-Plus camera-perturbed, $\Delta\theta{=}15^\circ$): same task with rolled camera; the slot tokenizer's relative \se{} bias keeps the gripper's approach vector unchanged in object frame. \emph{Row~3} (LIBERO-Long, step $4/10$): ``open the top drawer, then place the mug inside, then close the drawer''; the role queries reassign across sub-steps (frames overlay $r_1$ attention as a coloured halo).
+%   \end{minipage}}
+%   \caption{Successful \method{} rollouts. Each row picks a representative episode and shows six evenly-spaced frames; cyan = end-effector trace, coloured haloes = $r_1$ target attention.}
+%   \label{fig:rollouts}
+% \end{figure}
+
+% \subsection*{Role-query attention heatmaps}
+
+% \begin{figure}[!ht]
+%   \centering
+%   \fbox{\begin{minipage}[c][3.8cm][c]{0.96\linewidth}
+%   \centering
+%   \textbf{Role-query attention heatmaps across task families.} Four heatmaps in a $2\times 2$ grid, one per LIBERO suite (Spatial, Object, Goal, Long). Each heatmap is $4$ rows (role queries $r_1\!-\!r_4$) by $\bar{N}{+}1$ columns (mean valid slot count plus the robot token). Cells encode mean attention mass averaged over $300$ episodes per suite. The diagonal-like structure (target on $r_1$, reference on $r_2$, tool / container on $r_3$, distractor on $r_4$) is consistent across suites; in the Long suite, $r_3$ takes mass from a different ``tool'' slot at each sub-step. The aggregate target-attention mass on $r_1$ is reported as $0.81$ in Tab.~\ref{tab:diagnostics}.
+%   \end{minipage}}
+%   \caption{Role-query attention heatmaps grouped by LIBERO suite. The four queries specialize softly and consistently into target / reference / tool / distractor.}
+%   \label{fig:attn-heatmap}
+% \end{figure}
+
+% \subsection*{Distractor-consistency augmentations}
+
+% \begin{figure}[!ht]
+%   \centering
+%   \fbox{\begin{minipage}[c][3.6cm][c]{0.96\linewidth}
+%   \centering
+%   \textbf{Distractor-consistency augmentations.} Three triplets: (a) \emph{permutation}: an original LIBERO frame, two random distractor permutations of the slot order, and an overlay of the role-attention before vs.\ after; the attention is essentially identical (KL $0.04$). (b) \emph{insertion}: an original frame, the same frame with a foreign distractor (a coloured cube grafted from another in-batch sample) placed in an empty padding slot, and the role-attention overlay; target attention drifts by $0.05$. (c) Side-by-side action chunks $\hat{a}^{\mathrm{orig}}$ vs.\ $\hat{a}^{\mathrm{aug}}$ overlaid in 3D; their L2 deviation averages $0.018\,$m for \method{} versus $0.156\,$m for OpenVLA-OFT (Table~\ref{tab:diagnostics}).
+%   \end{minipage}}
+%   \caption{$\mathcal{L}_{\mathrm{compose}}$'s distractor-consistency augmentations and the resulting attention/action stability.}
+%   \label{fig:compose}
+% \end{figure}
+
+% \subsection*{Failure-case gallery}
+
+% \begin{figure}[!ht]
+%   \centering
+%   \fbox{\begin{minipage}[c][5.4cm][c]{0.96\linewidth}
+%   \centering
+%   \textbf{Failure-case gallery.} Six rows, three frames each, one row per failure category in Table~\ref{tab:failures}. \emph{Row~1} (target mask drifts): SAM~3 loses track of a partially-occluded target during reach; \method{}'s $r_1$ attention spreads across two slots and the gripper hovers. \emph{Row~2} (transparent pose wrong): a clear glass jar is masked but its $6$-DoF pose from depth is rotated $90^\circ$; the gripper closes orthogonally to the handle. \emph{Row~3} (distractor blocks target): a fresh distractor inserted by LIBERO-Plus physically occludes the contact path; trajectory collides. \emph{Row~4} (ambiguous instruction): ``put the bowl in the drawer'' when two bowls match; $r_1$ attention is bimodal. \emph{Row~5} (correct target, wrong grasp): \method{} reaches the right object but contacts the rim instead of the handle. \emph{Row~6} (online latency): cached evaluation succeeds; in the online ablation the tokenizer falls behind by $138$\,ms and the gripper overshoots.
+%   \end{minipage}}
+%   \caption{Failure-case gallery aligned with Table~\ref{tab:failures}. The categories are visibly distinguishable, supporting the perception/policy split reported in Table~\ref{tab:diagnostics}.}
+%   \label{fig:failures-gallery}
+% \end{figure}
+
+% \FloatBarrier

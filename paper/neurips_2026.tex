@@ -1,0 +1,408 @@
+\documentclass{article}
+
+\PassOptionsToPackage{numbers,sort&compress}{natbib}
+\usepackage[preprint]{neurips_2026}
+
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\setmainfont{TeX Gyre Termes}
+\setCJKmainfont{FandolSong}[BoldFont=FandolHei, ItalicFont=FandolKai]
+\setCJKsansfont{FandolHei}
+\setCJKmonofont{FandolFang}
+\XeTeXlinebreaklocale "zh"
+\XeTeXlinebreakskip = 0pt plus 1pt
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{wrapfig}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{placeins}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{makecell}
+\usepackage{caption}
+
+\renewcommand{\figurename}{图}
+\renewcommand{\tablename}{表}
+\renewcommand{\refname}{参考文献}
+\renewcommand{\abstractname}{摘要}
+\renewcommand{\appendixname}{附录}
+\floatname{algorithm}{算法}
+\algrenewcommand\algorithmicrequire{\textbf{输入:}}
+\algrenewcommand\algorithmicensure{\textbf{输出:}}
+\algrenewcommand\algorithmicreturn{\textbf{返回}}
+
+% Float placement tuning: prevent clusters of float-only pages so text and
+% figures/tables interleave naturally.
+\renewcommand{\textfraction}{0.25}
+\renewcommand{\topfraction}{0.85}
+\renewcommand{\bottomfraction}{0.65}
+\renewcommand{\floatpagefraction}{0.95}
+\setcounter{topnumber}{2}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{3}
+
+\newcommand{\method}{OA-WAM}
+\newcommand{\rwat}{RWAT}
+\newcommand{\se}{\ensuremath{\mathrm{SE}(3)}}
+
+% Table macros (used by main result tables in Sec. Experiments)
+\definecolor{ourshl}{RGB}{218,236,255}   % light blue, our cells
+\newcommand{\B}[1]{\textbf{#1}}                            % first place
+\newcommand{\U}[1]{\underline{#1}}                         % second place
+\newcommand{\hl}[1]{\cellcolor{ourshl}#1}                  % our-cell tint
+\newcommand{\methodours}{\textbf{OA-WAM (本文)}}
+\newcommand{\sectionrow}[2]{%
+  \multicolumn{#1}{@{}l}{\textit{\hspace{0.15em}#2}}\\}     % inline italic header
+
+\title{OA-WAM：用于鲁棒机器人操作的对象可寻址世界动作模型}
+
+% \author{Anonymous Author(s)}
+\newcommand{\namegap}{\hspace{2.5em}}
+\author{%
+\begin{tabular}{c}
+\textbf{Yushan Liu}$^{1}$ \namegap
+\textbf{Peibo Sun}$^{2}$ \namegap
+\textbf{Shoujie Li}$^{3}$ \namegap
+\textbf{Yifan Xie}$^{1}$ \\[0.4em]
+\textbf{Lingfeng Zhang}$^{1}$ \namegap
+\textbf{Xintao Chao}$^{1}$ \namegap
+\textbf{Shiyuan Dong}$^{2}$ \\ [0.5em]
+\textbf{Fang Chen}$^{2}$ \namegap
+\textbf{Xiao-Ping Zhang}$^{1}$ \namegap
+\textbf{Wenbo Ding}$^{1}$\thanks{通讯作者。} \\[1em]
+{\normalfont$^{1}$清华大学} \\[0.4em]
+{\normalfont$^{2}$上海交通大学} \\[0.4em]
+{\normalfont$^{3}$Nanyang Technological University}
+\end{tabular}%
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+世界动作模型（World Action Models, WAM）通过联合预测场景演化和机器人动作来增强视觉-语言-动作（Vision-Language-Action, VLA）策略。然而，多数现有方法把预测世界表示为整体图像、视频 token 流或全局潜变量；当指令指向某个具体目标物体时，动作解码器很难稳定定位该物体：在新的场景偏移下，相关物体通常仍然可见，但整体式 token 会把其身份与周围上下文纠缠在一起。本文将这一问题刻画为缺乏\emph{对象可寻址性}，并提出 OA-WAM，即用于鲁棒机器人操作的对象可寻址世界动作模型。每一帧被分解为 $N{+}1$ 个逐槽位状态 token（$1$ 个机器人槽位、$N$ 个物体槽位），每个 token 拼接身份向量 $\mathrm{addr}_k$ 和随时间变化的内容向量 $\mathrm{content}_k^t$，再与文本、图像、本体感知和历史动作 token 融合成块因果序列。世界头回归下一帧槽位状态，流匹配动作头解码 $16$ 步连续动作块，二者在一次前向传播中同时完成。OA-WAM 在架构上通过每个 Transformer 层中仅基于 $\mathrm{addr}$ 路由跨槽位注意力来强制对象可寻址性，即采用仅地址键投影，并在每层重置残差流中的地址切片。这在张量层面把“要操作哪个物体”和“该物体当前是什么状态”分离开来，在不引入额外 token 的情况下提供可干预的对象级接口。OA-WAM 在 LIBERO（$97.8\%$）和 SimplerEnv（$79.3\%$）上达到与 SOTA VLA 和 WAM 基线相当的性能；在 LIBERO-Plus 上，OA-WAM 在最符合本文假设的几何轴上取得新的 SOTA，同时在七轴总体指标上仍与 $\pi_{0.5}$ 保持竞争力（$83.9\%$ vs $85.7\%$）。因果槽位干预测试中，OA-WAM 的交换绑定余弦为 $0.87$，而所有整体式基线均不超过 $0.09$。结果表明，将世界模型显式组织为可寻址的对象状态，是在场景扰动下实现更鲁棒机器人操作的有效路径。
+\end{abstract}
+
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig1.pdf}
+
+  \caption{\textbf{\method{}概览。} 在场景扰动下（左，六类典型扰动轴），整体式 WAM 会在全局 token 中纠缠目标身份与上下文，并漂移到错误动作（右上）。本文的 OA-WAM（右下）把每一帧分解为 $N{+}1$ 个可寻址对象槽位，其跨槽位注意力键只读取身份地址子向量，从而保持鲁棒操作。}
+  \label{fig:pipeline}
+
+\end{figure}
+
+\section{引言}
+
+机器人操作天然发生在对象层面。诸如“把红色杯子放到绿色托盘上”的指令，并不是要求机器人复现一条训练轨迹；它要求机器人在当前场景中识别语言命名的物体，推理它们与周围干扰物之间的空间和功能关系，并生成正确、鲁棒的闭环动作。视觉-语言-动作（VLA）策略通过扩展视觉语言主干、机器人数据和动作解码器，在标准操作基准上取得了快速进展~\citep{rt2,openvla,pi05}；世界动作模型（WAM）进一步联合预测动作和未来世界状态，为策略提供额外的时间与因果监督~\citep{rynnvla002,adaworldpolicy,dreamzero}。
+
+然而，鲁棒性基准表明，标准基准上的高分并不意味着可靠的场景理解：当物体布局、相机视角、机器人初始状态、背景、光照或传感器噪声发生温和扰动时，策略常常从近乎饱和的成功率迅速崩溃~\citep{liberoplus,colosseum,robustvla}，并且对改写后的甚至无意义的指令 token 仍不敏感~\citep{liberoplus,liberopro}。这两点都说明，目标选择绑定的是训练布局和视觉上下文，而不是语言命名的物体。多数现有 WAM 仍把预测世界表示为整帧观测、图像/视频 token 流或共享的全局视觉-动作潜变量~\citep{uwm,worldvla,cotvla}；这些表示能捕捉场景如何演化，却没有给动作解码器提供稳定接口来判断\emph{应该操作哪个}物体。当相机、布局或机器人位姿变化时，目标物体通常仍然可见，却会在整体式 token 中与背景和邻近内容纠缠，导致动作选择漂移。
+
+对象中心工作试图弥补这一缺口：基于槽位的动力学模型提升了样本效率和关系推理能力~\citep{focus,ocwm}，对象状态 grounding 则把对象表示转化为语言与动作之间的操作接口~\citep{goalvla,slotvla,lilovla}。但许多方法依赖从零开始的 Slot-Attention 式发现~\citep{slotattention,slotformer,slotdiffusion}，容易受固定槽位数、遮挡和杂乱场景影响；即使得到稳定槽位，每个槽位仍混合身份、外观、位姿和局部上下文，因此动作解码器在扰动下仍可能漂移到错误实例。
+
+基于这一诊断，本文提出 \method{}，一种对象可寻址的 WAM。每一帧被分解为 $N{+}1$ 个槽位，其向量拆分为冻结的身份地址 $\mathrm{addr}_k$ 和随时间变化的内容 $\mathrm{cnt}_k^t$。前者在每个 episode 中仅根据语言标签和初始 DINOv3 特征计算一次，此后不再更新；后者则每一步由 SAM~3 + DINOv3 掩码刷新。槽位与文本、图像 VQ、本体感知和历史动作流融合成块因果序列，由 7B Chameleon 风格主干处理；世界头回归下一帧逐槽位 $(\hat{\mathrm{cnt}},\hat{\mathrm{pose}})$，流匹配动作头在一次前向传播中解码 16 步连续动作块。OA 约束由两个无参数的张量级操作实现，并施加在 32 个 Transformer 层的\emph{每一层}：跨槽位键投影只读取 $\mathrm{addr}$ 子向量，前向钩子把残差中的 $\mathrm{addr}$ 切片重置为缓存身份。由于 $\mathrm{addr}$ 在 episode 内冻结，且重置阻断了流向它的梯度，每个 Transformer 层的槽位路由键在架构上被限制为只依赖冻结的身份地址。\emph{在上游槽位提取正确的条件下}，这消除了整体式主干的一种具体失效模式，即场景上下文偏移无法再改写动作头读取的槽位；内容、位姿和语言仍可通过残差流和值投影自由流动。该约束作用于键路由，而不是端到端语义正确性的保证，并会继承 SAM~3 + Qwen3-VL 槽位流程产生的错误。
+
+在三个基准上，\method{}在假设预测的区域验证了该设计。在分布内 LIBERO 和 SimplerEnv WidowX（Visual Matching）上，其平均成功率达到 $97.8$ 和 $79.3$，领先所有已发表的 VLA 和 WAM 基线（表~\ref{tab:libero-simpler}）。在 LIBERO-Plus 鲁棒性基准上（表~\ref{tab:libero-plus}），它在与假设最一致的几何轴上达到新的 SOTA：相机轴 $80.5$（比 Cosmos-Policy 高 $+4.7$\%）、机器人初始状态 $89.6$（与 X-VLA 相差 $0.1$\% 内），Camera/Robot/Layout 几何轴平均为 $84.3$（比 $\pi_{0.5}$ 高 $+4.8$\%）；七轴总平均为 $83.9$，接近 $\pi_{0.5}$ 的 $85.7$，残余差距集中在 Sensor Noise 轴，其光度破坏主要干扰感知阶段的槽位提取，而非动作策略本身。因果槽位干预测试中，\method{}的交换绑定余弦为 $0.87$，而八个整体式基线均不超过 $0.09$，直接给出目标选择扎根于显式地址子空间的行为证据；OA 隔离消融进一步表明，仅关闭地址专用键投影就会使 LP camera 下降 $13.3$\%，而分布内 LIBERO 几乎不变（$-1.5$\%），呈现出 OOD 特定归纳偏置而非通用容量增益的非对称特征。
+
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=0.9\linewidth]{figures/fig2.pdf}
+
+  \caption{\textbf{\method{}架构。}
+多模态输入被编码为各类 token 流：
+对象槽位 token 由 SAM3+DINOv3 得到，并通过可学习的槽位适配器投影；
+只有槽位 token 引入可学习参数，其余 token 复用冻结的 \texttt{embed\_tokens}。
+这些 token 被组装为块因果序列，末尾接一个可学习动作查询 \texttt{[ACT-Q]}，再由槽位感知主干处理。
+世界头读取槽位隐藏状态，预测下一帧逐槽位 $(\hat{\mathrm{cnt}}, \hat{\mathrm{pose}})$ 作为辅助监督；
+动作头解码 $16$ 步动作块。}
+
+\end{figure}
+
+本文贡献如下：
+\begin{itemize}[leftmargin=1.2em,itemsep=0pt,topsep=-2pt]
+    \item 本文把现有 WAM 在操作扰动下鲁棒性不足的问题建模为缺乏对象可寻址性：世界状态不仅应预测未来，还应提供稳定的逐对象状态，使语言条件动作生成能够直接查询任务相关物体。
+    \item 本文提出 \method{}，它使用逐槽位 $\mathrm{addr}/\mathrm{content}$ 状态 token、块因果世界-动作序列、时间对齐的世界/动作头，以及由“仅地址键投影 + 每层地址流重置”组成的两部分 OA 约束，从架构上解耦对象身份寻址与随时间变化的内容建模。
+    \item 本文在标准 LIBERO 和 SimplerEnv 上达到 SOTA 级性能，并在 LIBERO-Plus 中与假设最直接相关的相机和机器人初始状态轴上领先；消融和槽位干预测试确认，对象可寻址接口是该鲁棒性模式的关键来源。
+\end{itemize}
+
+\section{相关工作}
+
+\paragraph{具有整体式未来预测的世界动作模型。}
+世界动作模型把动作策略与世界模型目标耦合起来，使策略学习其动作如何改变场景。从潜空间想象控制（Dreamer~V3, TD-MPC2）~\citep{dreamerv3,tdmpc2} 和文本条件视频规划（UniPi, RoboDreamer, ManipDreamer, NovaPlan）~\citep{unipi,robodreamer,manipdreamer,novaplan}，到统一的动作-未来模型，包括耦合扩散（UWM）、交错自回归流（WorldVLA, RynnVLA-002, UniVLA）、JEPA 风格和潜变量 WAM（VLA-JEPA, Being-H0.7）、记忆或世界链推理（MemoryVLA, CoT-VLA, CoWVLA, AdaWorldPolicy, dreamzero, lingbotva）、生成-动作桥接（F1）、基础视频策略微调（GE-Act, Cosmos-Policy），以及近期面向测试时效率（Fast-WAM）、条件空间世界表示（World Guidance）、组合式世界模型（RISE）和正反向验证（WAV）的变体~\citep{uwm,worldvla,rynnvla002,univla,vlajepa,beingh07,memoryvla,cotvla,cowvla,adaworldpolicy,dreamzero,lingbotva,f1vla,geact,cosmospolicy,fastwam,worldguidance,rise,wav}，这些模型在像素空间、自回归 token 流或全局潜变量中预测未来，提供额外的时间监督，但并不给出分解且可查询的视图来表示指令命名的各个物体。\method{}把世界预测重构为逐对象槽位状态预测，补上整体式世界目标缺失的可寻址对象级接口。
+
+\paragraph{鲁棒操作策略。}
+视觉-语言-动作（VLA）策略主导闭环操作。从 RT-1/2 和 Open X-Embodiment / Octo~\citep{rt1,rt2,openx,octo} 开始，这一路线通过微调 VLM 主干（OpenVLA, RDT, GR00T~N1.5, SpatialVLA, NORA, SmolVLA, X-VLA, ABot-M0, InternVLA-M1）~\citep{openvla,rdt,groot15,spatialvla,nora,smolvla,xvla,abotm0,internvlam1}、加入流匹配或优化动作头（$\pi_0/\pi_{0.5}$, OpenVLA-OFT）~\citep{pi0,pi05,openvlaoft}，并结合视觉运动设计（ACT, Diffusion Policy, Transporter, CLIPort, PerAct, VIMA）~\citep{act,diffusionpolicy,transporter,cliport,peract,vima} 来扩展能力，已接近饱和标准基准。然而，近期压力测试~\citep{liberoplus,liberopro,liberox,colosseum,robustvla} 揭示了温和场景扰动下的崩溃以及策略对语言改写的不敏感；STRONG-VLA~\citep{strongvla} 等训练侧修复仍保持感知接口不变，因此策略仍把“要操作哪个物体”绑定到训练布局和视觉上下文，而不是语言命名目标。\method{}在架构层面处理这一问题：把目标选择锚定到冻结的、语言 grounding 的身份向量，使其对场景内容保持不变，从而让鲁棒性成为主干的结构属性，而非训练数据的结果。
+
+\paragraph{对象中心表示。}
+对象中心表示把场景分解为对象级潜状态。从生成式分解模型（MONet, IODINE, GENESIS, STEVE）~\citep{monet,iodine,genesis,steve} 和 Slot-Attention 家族（Slot Attention, SAVi, SAVi++, SlotFormer, SlotDiffusion）~\citep{slotattention,savi,savipp,slotformer,slotdiffusion}，到把对象槽位与基于模型的强化学习相结合的机器人工作（FOCUS, SOLD）~\citep{focus,sold} 以及语言条件策略（OCWM, Goal-VLA, SlotVLA, OAT-VLA, ObeyedVLA, STORM, LiLo-VLA）~\citep{ocwm,goalvla,slotvla,oatvla,obeyedvla,storm,lilovla}，再到用基础感知（SAM/SAM~2/SAM~3, DINO/DINOv2/DINOv3, CLIP, SigLIP, T5, Qwen3-VL）~\citep{sam,sam2,sam3,dino,dinov2,dinov3,clip,siglip,t5,qwen3vl} 稳定槽位发现，这一系列方法要么仍对槽位数、遮挡和杂乱敏感，要么在获得稳定槽位后，仍把每个物体的身份、外观、位姿和上下文编码在同一向量中，使动作解码器没有架构保证可将“要操作哪个物体”与“该物体当前是什么状态”解耦。\method{}通过把每个槽位划分为冻结身份地址和时变内容子向量，并在每个 Transformer 层中仅通过地址子向量路由跨槽位注意力来弥合这一缺口。这是在张量层面、无参数地承诺可寻址路由（条件是上游语言 grounding 槽位提取正确），此前世界模型或 VLA 模型并未提供这种机制。
+
+\section{方法}
+\label{sec:method}
+
+\subsection{问题设置}
+\label{sec:method:setup}
+
+在步骤 $t$，智能体观测 RGB 帧 $\mathbf{I}_t$（第三人称与腕部视角）、本体感知 $\mathbf{q}_t\!\in\!\mathbb{R}^{7}$、语言指令 $\ell$，以及过去 $T{-}1$ 个已执行动作 $\mathbf{a}_{<t}$。策略 $\pi_\theta$ 在一次前向传播中生成动作块 $\mathbf{A}_t\!=\!(\mathbf{a}_t,\dots,\mathbf{a}_{t+H-1})\!\in\!\mathbb{R}^{H\times 7}$（$H{=}16$），并预测逐对象下一帧状态 $\widehat{\mathcal{S}}_{t+1}\!=\!\{(\hat{\mathbf{c}}_k^{t+1},\hat{\mathbf{p}}_k^{t+1})\}_{k=1}^{N}$：
+\begin{equation}
+\bigl(\mathbf{A}_t,\,\widehat{\mathcal{S}}_{t+1}\bigr)\;\sim\;\pi_\theta\!\bigl(\mathbf{I}_{\le t},\,\mathbf{q}_{\le t},\,\ell,\,\mathbf{a}_{<t}\bigr).
+\label{eq:policy}
+\end{equation}
+\method{}基于对象级输入表示来参数化 $\pi_\theta$：每一帧被分解为 $N{+}1$ 个槽位，并约束跨槽位注意力键只依赖对象身份。
+
+\subsection{对象槽位 token 化与统一序列}
+\label{sec:method:slot}
+
+冻结的基础感知模块产生六条并行 token 流，共享同一条 Chameleon-7B 序列~\citep{chameleon,luminamgpt}：BPE 文本；Qwen3-VL~\citep{qwen3vl} 名词短语（只作为 SAM~3 提示，不进入主干）；Chameleon VQ-GAN 图像码；SAM~3~\citep{sam3}+DINOv3~\citep{dinov3}+位姿对象槽位；$256$ 桶离散化本体感知；以及 $256$ 桶离散化历史动作。五条流复用预训练 Chameleon 嵌入表，只有槽位流引入新参数。对帧 $t$ 中的每个槽位 $k$，构造 $320$ 维槽位向量
+\begin{equation}
+\mathbf{s}_k^t \;=\; \bigl[\,\underbrace{\mathbf{addr}_k}_{32}\;\big\Vert\;\underbrace{\mathbf{cnt}_k^t}_{256}\;\big\Vert\;\underbrace{\boldsymbol{\pi}^t}_{16}\;\big\Vert\;\underbrace{\boldsymbol{\rho}_k}_{16}\,\bigr]\;\in\;\mathbb{R}^{320},
+\label{eq:slot}
+\end{equation}
+其中 $\mathbf{addr}_k\!=\!f_\mathrm{addr}([\boldsymbol{\ell}_k\Vert\mathbf{f}_k^{(0)}])$ 在 $t{=}0$ 由语言标签和初始 DINOv3 特征计算一次，并在整个 episode 中固定（对象身份）；$\mathbf{cnt}_k^t\!=\!f_\mathrm{cnt}(\mathbf{raw}_k^t)$ 每帧重新计算（时变状态）；$\boldsymbol{\pi}^t$ 是帧索引的正弦嵌入；$\boldsymbol{\rho}_k$ 是三个角色标签（\texttt{robot}, \texttt{object}, \texttt{padding}）上的可学习查表。槽位适配器 $f_\phi\!:\!\mathbb{R}^{320}\!\to\!\mathbb{R}^{4096}$ 将每个槽位投影到主干隐藏维度，并通过 LLaVA 风格的 \texttt{masked\_scatter} 模式~\citep{llava,idefics2} 用槽位嵌入替换输入序列中的 $\langle\texttt{slot}\rangle$ 占位位置。完整序列在帧组之间块因果，并以可学习查询 token $\textsc{[act\_q]}$ 结束；动作头读取该 token 的最终隐藏状态。槽位容量固定为 $N_{\max}{=}16$，未使用位置用掩码填充；多实例名词短语在 $t{=}0$ 由 Qwen3-VL 关系图消歧，身份则通过 SAM~3 概念跟踪跨帧保持（附录~\ref{app:tokenizer-detail}）。
+
+\subsection{对象可寻址注意力}
+\label{sec:method:oa}
+
+\begin{wrapfigure}{r}{0.40\linewidth}
+  \centering
+  \vspace{-1.0em}
+  \includegraphics[width=\linewidth]{figures/fig3.pdf}
+  \caption{\textbf{OA 注意力掩码。} 帧间块因果；帧内槽位双向可见（红色对角块）。$W_K$ 只读取 $\mathrm{addr}_k$（前 32 维）。}
+  \label{fig:attn-mask}
+\vspace{-2em}
+\end{wrapfigure}
+$7$B 主干是 Chameleon 风格的多模态自回归 Transformer（$32$ 层，隐藏维度 $4096$，$32$ 个注意力头）。在槽位类型位置，标准自注意力被替换为槽位感知变体，其中键投影输入被限制为地址子向量（图~\ref{fig:attn-mask}；帧内槽位为双向注意力以保持置换等变，帧间为块因果）：
+\begin{equation}
+\begin{gathered}
+\mathbf{K}_k^{(\ell)} = W_K^{(\ell)}\!\cdot\!\mathrm{mask}_{\le 32}\!\bigl(\mathbf{x}_k^{(\ell)}\bigr), \\
+\mathbf{Q}_k^{(\ell)} = W_Q^{(\ell)}\mathbf{x}_k^{(\ell)}, \quad
+\mathbf{V}_k^{(\ell)} = W_V^{(\ell)}\mathbf{x}_k^{(\ell)},
+\end{gathered}
+\label{eq:oa}
+\end{equation}
+$\mathrm{mask}_{\le 32}$ 将前 $32$ 维之外的所有坐标置零。这等价于只把 $\mathrm{addr}_k$ 通过 $W_K$ 的 $32$ 维切片投影，但实现为投影前掩码，因此可复用预训练 $W_K$，不引入 OA 专用参数；非槽位位置使用未修改的基础注意力（逐模块统计见附录~\ref{app:heads}）。每个 Transformer 块之后，前向钩子会在槽位位置执行 $\mathbf{x}_k^{(\ell+1)}[1{:}32]\!\leftarrow\!\mathbf{addr}_k$，覆盖前 $32$ 个输出坐标，同时保持其余 $4064$ 个坐标不变，从而防止地址通过残差更新漂移。与式~\eqref{eq:oa} 结合后，该机制从构造上确保每一层的槽位路由键信号只依赖冻结的身份地址：\emph{在槽位提取正确的条件下}，动作头关注哪个槽位由 $\mathrm{addr}$ 决定，而不是由 $\mathbf{cnt}_k^t$、场景上下文或非槽位 token 决定；时变内容仍通过值和残差流传播。这是键路由的架构属性，并非端到端 grounding 正确性的语义保证；如果 SAM~3 漏检物体，或两个槽位初始化为模糊地址，路由约束无法修复上游错误。整体式 VLA 主干~\citep{openvla,pi05,groot15} 在单一 patch-token 流中纠缠身份、外观与周围上下文；\method{}在张量层面将它们分离。
+
+\subsection{预测头}
+\label{sec:method:heads}
+
+三个预测头读取最终隐藏状态 $\mathbf{H}\!\in\!\mathbb{R}^{B\times L\times 4096}$。 \emph{世界头} $h_\psi$ 将逐槽位隐藏状态输入两个并行 MLP：内容分支（$4096{\to}1024{\to}256$）和位姿分支（$4096{\to}256{\to}9$），并用均方误差监督：
+\begin{equation}
+\mathcal{L}_\mathrm{world}=\frac{1}{N}\sum_{k=1}^{N}m_k^\mathrm{obj}\!\Bigl(\bigl\|\hat{\mathbf{c}}_k^{t+1}-\mathbf{c}_k^{t+1}\bigr\|_2^2+\lambda_p\bigl\|\hat{\mathbf{p}}_k^{t+1}-\mathbf{p}_k^{t+1}\bigr\|_2^2\Bigr);
+\label{eq:world}
+\end{equation}
+机器人槽位不参与该损失，因为其未来由正在生成的动作决定。 \emph{动作头} $h_\xi$ 读取 $\textsc{[act\_q]}$ 隐藏状态，是一个流匹配 MLP~\citep{flowmatching,pi0}，用于在完整 $16$ 步动作块上预测速度场 $\mathbf{v}_\xi$；训练时最小化条件流匹配目标
+\begin{equation}
+\mathcal{L}_\mathrm{act}=\mathbb{E}_{\tau,\boldsymbol{\epsilon}}\!\left\|\mathbf{v}_\xi\!\bigl(\mathbf{A}_t^\tau,\tau,\mathbf{H}_{\textsc{act\_q}}\bigr)-(\mathbf{A}_t-\boldsymbol{\epsilon})\right\|_2^2,\;\;\mathbf{A}_t^\tau=\tau\,\mathbf{A}_t+(1-\tau)\,\boldsymbol{\epsilon},
+\label{eq:act}
+\end{equation}
+其中 $\tau\sim\mathcal{U}(0,1)$，$\boldsymbol{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I})$。推理时，动作块通过 $4$ 步前向 Euler 积分在一次前向传播中解码，避免了自回归动作解码器的块内误差累积~\citep{rynnvla002,worldvla}。 \emph{辅助图像 VQ 头} 复用主干的 $\mathrm{lm\_head}$，用加权交叉熵 $\mathcal{L}_\mathrm{vq}$ 预测下一帧 VQ token，不引入新参数。
+
+\subsection{训练目标}
+
+总训练损失把三个头项与两个来自先前对象中心 VLA 工作~\citep{slotvla,oatvla} 的辅助正则项结合起来：
+\begin{equation}
+\mathcal{L}(\theta) \;=\; \mathcal{L}_\mathrm{act} \;+\; \lambda_w\,\mathcal{L}_\mathrm{world} \;+\; \lambda_v\,\mathcal{L}_\mathrm{vq} \;+\; \lambda_c\,\mathcal{L}_\mathrm{compose} \;+\; \lambda_r\,\mathcal{L}_\mathrm{role}.
+\label{eq:loss}
+\end{equation}
+$\mathcal{L}_\mathrm{compose}$ 强制模型对随机干扰物置换和插入保持不变；$\mathcal{L}_\mathrm{role}$ 在可用时使动作头注意力与从语言抽取的目标/参照标签对齐。四个权重 $\{\lambda_w,\lambda_v,\lambda_c,\lambda_r\}$ 是固定（不可学习）超参数，取值为 $\{0.5,\,0.04,\,0.1,\,0.05\}$；$\lambda_c$ 在训练前 $30\%$ 从 $0$ 线性升至最终值，$\lambda_r$ 在训练前半段之后退火为 $0$。在冻结的 $7$B 槽位感知主干之上，槽位适配器和预测头使用标准 LIBERO 演示进行对齐与微调，得到约 $\sim\!127$M 个可训练参数（$\{q,k,v,o,\mathrm{gate},\mathrm{up},\mathrm{down}\}\text{\_proj}$ 上 $80$M LoRA 参数，预测头 $47$M）；LIBERO-Plus 保留为分布外评估。伪代码见附录~\ref{app:pseudocode}；其余实现细节，包括 token 化、槽位适配器与预测头架构、主干集成、序列模板、损失组件与增强、训练流程和超参数、推理延迟以及等变性证明，见附录~\ref{app:tokenizer-detail}--\ref{app:latency}。
+
+\section{实验}
+
+\subsection{设置}
+
+本文在三个仿真基准上评估。\textbf{LIBERO}~\citep{libero} 衡量四个标准任务套件（Spatial / Object / Goal / Long）上的分布内成功率。\textbf{SimplerEnv}（WidowX、Bridge 任务、Visual Matching）~\citep{simplerenv} 衡量相对于真实 WidowX 场景的仿真到真实视觉匹配。\textbf{LIBERO-Plus}~\citep{liberoplus} 在七个受控扰动轴上衡量鲁棒性：Camera、Robot init、Layout、Light、Background、Language、Sensor noise；训练仅限标准 LIBERO 演示。所有报告数值均为三个随机种子的均值；逐套件引用来源、置信区间计算和结果来源归因见附录~\ref{app:eval}。
+
+\subsection{主要结果}
+
+% =====================================================================
+% Combined Table -- LIBERO + SimplerEnv WidowX
+% =====================================================================
+\begin{table}[!t]
+\centering
+\caption{\textbf{LIBERO 与 SimplerEnv（WidowX, Visual Matching）比较。} 所有数值均为成功率（\%）。\B{最佳}结果加粗，\U{第二名}加下划线。}
+\label{tab:libero-simpler}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.10}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l c c c c c c c c c c}
+\toprule
+ & \multicolumn{5}{c}{\textbf{LIBERO}} & \multicolumn{5}{c}{\textbf{SimplerEnv WidowX (Visual Matching)}} \\
+\cmidrule(lr){2-6} \cmidrule(lr){7-11}
+\makecell{方法} & \makecell{Spatial} & \makecell{Object} & \makecell{Goal} & \makecell{Long} & \makecell{平均} & \makecell{Spoon\\Towel} & \makecell{Carrot\\Plate} & \makecell{Stack\\Cube} & \makecell{Eggplant\\Basket} & \makecell{平均} \\
+\midrule
+\sectionrow{11}{视觉-语言-动作模型}
+\addlinespace[0.15em]
+OpenVLA~\citep{openvla}              & 84.7      & 88.4      & 79.2      & 53.7      & 76.5      & ---       & ---       & ---       & ---       & --- \\
+SpatialVLA~\citep{spatialvla}        & 88.2      & 89.9      & 78.6      & 55.5      & 78.1      & 16.7      & 25.0      & 29.2      & \B{100.0} & 42.7 \\
+$\pi_0$~\citep{pi0}                  & 96.8      & 98.8      & 95.8      & 85.2      & 94.2      & ---       & ---       & ---       & ---       & --- \\
+$\pi_{0.5}$~\citep{pi05}             & \U{98.8}  & 98.2      & \B{98.0}  & 92.4      & 96.9      & ---       & ---       & ---       & ---       & --- \\
+InternVLA-M1~\citep{internvlam1}     & 98.0      & \U{99.0}  & 93.8      & 92.6      & 95.9      & \B{87.5}  & 67.9      & 31.3      & \B{100.0} & 71.7 \\
+CogACT~\citep{cogact}                & ---       & ---       & ---       & ---       & ---       & 71.7      & 50.8      & 15.0      & 67.5      & 51.3 \\
+\midrule
+\sectionrow{11}{世界动作模型}
+\addlinespace[0.15em]
+F1-VLA~\citep{f1vla}                 & 98.2      & 97.8      & 95.4      & 91.3      & 95.7      & 50.0      & 70.8      & 50.0      & 66.7      & --- \\
+MemoryVLA~\citep{memoryvla}          & 98.4      & 98.4      & 96.4      & 93.4      & 96.5      & 75.0      & \B{75.0}  & 37.5      & \B{100.0} & 71.9 \\
+VLA-JEPA~\citep{vlajepa}             & 96.2      & \B{99.6}  & 97.2      & 95.8      & \U{97.2}  & 75.0      & 70.8      & 12.5      & 70.8      & 57.3 \\
+CoWVLA~\citep{cowvla}                & 97.2      & 97.8      & 94.6      & 92.8      & 95.6      & 79.2      & 66.7      & \U{62.5}  & 95.8      & \U{76.0} \\
+ThinkAct~\citep{thinkact}            & 88.3      & 91.4      & 87.1      & 70.9      & 84.4      & 58.3      & 37.5      & 8.7       & 70.8      & 43.8 \\
+VITA~\citep{vita}                    & 95.9      & 98.9      & 95.1      & \B{96.8}  & 96.7      & \U{84.2}  & 68.8      & 37.5      & 95.6      & 71.5 \\
+\hl{\methodours{}} & \hl{\B{98.9}} & \hl{\U{99.0}} & \hl{\B{97.4}} & \hl{\U{95.9}} & \hl{\B{97.8}} & \hl{83.0} & \hl{\U{71.1}} & \hl{\B{65.0}} & \hl{{98.2}} & \hl{\B{79.3}} \\
+\bottomrule
+
+\end{tabular}}
+\end{table}
+
+% =====================================================================
+% Table 3 -- LIBERO-Plus (zero-shot only)
+% =====================================================================
+\begin{table}[t]
+\centering
+\caption{\textbf{LIBERO-Plus 鲁棒性基准比较（零样本，仅在标准 LIBERO 上训练）。}
+七个扰动轴（Camera / Robot init / Layout / Light / Background / Language / Sensor noise）上的成功率（\%）。
+\textbf{Geo Avg} 表示 Camera/Robot/Layout 三个几何轴的均值~\citep{liberoplus}。基线行来自~\citep{wam-vs-vla-2026} 的零样本评估或各方法原始报告。
+\B{最佳}结果加粗，\U{第二名}加下划线。}
+\label{tab:libero-plus}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.10}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l c c c c c c c c c}
+\toprule
+方法 & Cam & Robot & Layout & \B{Geo Avg} & Light & BG & Lang & Noise & 平均 \\
+\midrule
+\sectionrow{10}{视觉-语言-动作模型}
+\addlinespace[0.15em]
+OpenVLA-OFT~\citep{openvlaoft}       & 56.4      & 31.9      & 74.2      & 54.2      & 88.7      & 93.3      & 79.5      & 75.8      & 69.6 \\
+$\pi_0$~\citep{pi0}                  & 13.8      & 6.0       & 68.9      & 29.6      & 85.0      & 81.4      & 58.8      & 79.0      & 53.6 \\
+$\pi_{0.5}$~\citep{pi05}             & 75.4      & 77.5      & \B{85.7}  & \U{79.5}  & \B{96.9}  & 94.6      & 85.6      & \U{89.7}  & \B{85.7} \\
+ABot-M0~\citep{abotm0}               & 60.4      & 67.9      & 82.6      & 70.3      & 96.2      & 91.6      & \U{86.4}  & 86.4      & 80.5 \\
+X-VLA~\citep{xvla}                   & 23.4      & \B{89.7}  & 71.8      & 61.6      & 88.2      & \B{96.0}  & 75.7      & 62.7      & 71.4 \\
+AVA-VLA~\citep{avavla}               & 55.5      & 25.9      & 74.1      & 51.8      & 95.5      & 88.9      & 85.6      & 78.0      & 70.1 \\
+\midrule
+\sectionrow{10}{世界动作模型}
+\addlinespace[0.15em]
+WorldVLA~\citep{worldvla}            & 0.1       & 27.9      & 38.0      & 22.0      & 43.7      & 17.1      & 41.6      & 10.9      & 25.0 \\
+VLA-JEPA~\citep{vlajepa}             & 64.2      & 67.7      & \U{83.9}  & 71.9      & 91.8      & 93.4      & \B{88.1}  & 65.8      & 79.5 \\
+GE-Act~\citep{geact}                 & 60.7      & 77.0      & 80.2      & 72.6      & 95.8      & 86.0      & 77.4      & \B{90.9}  & 80.3 \\
+HoloBrain-0~\citep{holobrain}        & 65.5      & 58.2      & 79.5      & 67.7      & 88.1      & 90.3      & 78.7      & 66.9      & 74.0 \\
+Cosmos-Policy~\citep{cosmospolicy}   & \U{75.8}  & 63.3      & 82.2      & 73.8      & \U{96.5}  & 88.9      & 81.7      & \B{92.7}  & 82.2 \\
+\hl{\methodours} & \hl{\B{80.5}} & \hl{\U{89.6}} & \hl{82.8} & \hl{\B{84.3}} & \hl{\U{96.5}} & \hl{\U{95.9}} & \hl{85.3} & \hl{75.6} & \hl{\U{83.9}} \\
+\midrule
+\multicolumn{1}{l}{\emph{相对先前最佳的 $\Delta$}}
+                                     & \B{+4.7}  & $-$0.1    & $-$2.9    & \B{+4.8}  & $-$0.4    & $-$0.1    & $-$2.8    & $-$17.1   & $-$1.8 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{figure}[!tbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig4_results.pdf}
+  \caption{\textbf{主要结果。} 左：LIBERO-Plus 七个扰动轴的雷达图（表~\ref{tab:libero-plus}）；右：SimplerEnv WidowX（Bridge）逐任务成功率（表~\ref{tab:libero-simpler}）。\method{}在几何 LIBERO-Plus 轴上达到新的 SOTA（Geo-Avg $84.3$，比 $\pi_{0.5}$ 高 $+4.8$\%），并在 SimplerEnv 上取得 $79.3$ 平均成功率。}
+  \label{fig:radar}
+
+\end{figure}
+
+\paragraph{标准基准。} 在 LIBERO 和 SimplerEnv 上（表~\ref{tab:libero-simpler}），\method{}的平均成功率达到 $97.8$ 和 $79.3$，分别比最强先前基线高 $+0.6$\%（LIBERO 上的 VLA-JEPA，$97.2$）和 $+3.3$\%（SimplerEnv 上的 CoWVLA，$76.0$）。因此，槽位感知分解并未牺牲分布内精度，这是后续鲁棒性比较的前提。
+
+\begin{figure}[!htbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig5_mechanism.pdf}
+  \caption{\textbf{机制诊断（A1, A2）。} \textbf{(a)} LP-camera 成功率随相机偏移角 $\Delta\theta$ 的变化：V0（完整 \method{}）和 V1（关闭键掩码）在分布内重合，随着 $\Delta\theta$ 增大而分离。\textbf{(b)} 来自 $r_{1\text{-}4}$ 的角色查询注意力（target/reference/tool/distractor）在槽位类型上的分布，在 $300$ 个 LIBERO-Spatial episode 上取平均。\textbf{(c)} A2 地址交换下的末端执行器轨迹：\method{}向被交换目标偏转，而整体式基线不会偏转（余弦见表~\ref{tab:abl-intervention}）。}
+  \label{fig:sweeps}
+
+\end{figure}
+
+\paragraph{鲁棒性基准。} 在 LIBERO-Plus 上（表~\ref{tab:libero-plus}），\method{}在与本文假设最一致的三个几何轴上取得新的 SOTA（Geo Avg $84.3$，比 $\pi_{0.5}$ 高 $+4.8$\%）：这三个轴都保持目标物体身份不变，同时几何重排场景，正是仅地址路由发挥作用的区域。\method{}在外观/语言轴上与 $\pi_{0.5}$ 的优势相当，但在 Sensor Noise 上落后 $-17.1$\%，这是槽位提取失败（光度失真破坏逐对象内容）而不是策略阶段失败。表~\ref{tab:abl-intervention} 确认，几何轴收益来自基于地址的绑定，而非额外容量。
+
+\subsection{消融研究}
+\label{sec:experiments:ablation}
+
+\paragraph{A1：对象可寻址性隔离。}
+为隔离 OA 约束，本文比较三个除 OA 之外完全相同的变体。它们共享训练流程、六路径 token 化、槽位适配器、世界/动作头、三个随机种子和评估协议，只在两个开关上不同：式~\eqref{eq:oa} 的仅地址键掩码 $\mathrm{mask}_{\le 32}$，以及每层地址流重置钩子（表~\ref{tab:abl-oa}）。\textbf{V0}（完整 \method{}）开启二者；\textbf{V1} 关闭键掩码；\textbf{V2} 进一步关闭重置钩子。关键在于，V2 与 V0 使用完全相同的 SAM~3 + DINOv3 + Qwen3-VL 感知、槽位 token 化、主干权重和训练数据，是判断几何轴收益来自重型感知栈还是 OA 约束的自然对照。V0$\to$V2 在 LP camera 上损失 $20.0$\%，LP avg 损失 $7.7$\%，说明几何轴效果主要来自 OA 约束本身，而非感知前端。仅禁用键掩码（V0$\to$V1）使 LP camera 下降 $13.3$\%，LP robot 下降 $18.2$\%，而 LIBERO 只变化 $1.5$\%，分布内漂移和几何 OOD 崩溃之间存在一个数量级差距。在 V1 基础上再移除重置钩子（V1$\to$V2）会使交换绑定从 $0.19$ 降到 $0.06$，把剩余效果归因于每层地址流隔离。损伤集中在保持目标身份但几何重排场景的轴上，与表~\ref{tab:libero-plus} 相互呼应，呈现 OOD 特定归纳偏置而不是通用容量增益的非对称特征。
+\begin{table}[t]
+\centering
+\caption{\textbf{A1：隔离对象可寻址性约束。} 三个变体除仅地址键掩码 $\mathrm{mask}_{\le 32}$（式~\eqref{eq:oa}）和每层地址重置钩子外完全相同。A2 的交换绑定作为行为参考一并列出。}
+\label{tab:abl-oa}
+\centering
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.10}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l c c cccc c c}
+\toprule
+变体 & K 掩码 & 重置钩子 & LIBERO & LP camera & LP robot & LP avg & SimplerEnv & 交换绑定 $\uparrow$ \\
+\midrule
+V2（无 OA）              & off & off & 95.4 & 60.5 & 64.8 & 76.2 & 56.7 & 0.06 \\
+V1（关闭掩码，开启钩子）         & off & on  & 96.3 & 67.2 & 71.4 & 80.8 & 64.0 & 0.19 \\
+\hl{V0（完整 \method{}，本文）} & \hl{on}  & \hl{on}  & \hl{\B{97.8}} & \hl{\B{80.5}} & \hl{\B{89.6}} & \hl{\B{83.9}} & \hl{\B{79.3}} & \hl{\B{0.87}} \\
+\bottomrule
+\end{tabular}}
+
+\end{table}
+
+
+\begin{wraptable}{r}{0.48\textwidth}
+\centering
+
+\caption{\textbf{A2：因果槽位干预（交换绑定）。} 测试时交换语言绑定目标槽位与场景中另一槽位的地址，其余输入固定；指标为末端执行器残差轨迹与朝向被交换目标的位移方向之间的余弦对齐。}
+\label{tab:abl-intervention}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{lc}
+\toprule
+方法 & 交换绑定 $\uparrow$ \\
+\midrule
+OpenVLA~\citep{openvla}             & 0.04 \\
+$\pi_0$~\citep{pi0}                 & 0.05 \\
+$\pi_{0.5}$~\citep{pi05}            & 0.05 \\
+OpenVLA-OFT~\citep{openvlaoft}      & 0.06 \\
+WorldVLA~\citep{worldvla}           & 0.09 \\
+VLA-JEPA~\citep{vlajepa}            & 0.07 \\
+Cosmos-Policy~\citep{cosmospolicy}  & 0.06 \\
+GE-Act~\citep{geact}                & 0.07 \\
+\midrule
+\method{}（V1，关闭掩码）            & 0.19 \\
+\method{}（均值池化头）          & 0.18 \\
+\hl{\method{}（完整，本文）}         & \hl{\B{0.87}} \\
+\bottomrule
+\end{tabular}
+
+\end{wraptable}
+
+
+\paragraph{A2：因果槽位干预。}
+A1 表明 OA 对 OOD 成功是必要的；A2 追问互补的机制问题：训练后的策略在推理时是否确实通过地址子空间来\emph{路由}目标选择？本文交换语言绑定目标槽位与场景中另一槽位的地址，保持其余输入固定，并测量所得末端执行器残差轨迹与被交换目标方向之间的余弦对齐（表~\ref{tab:abl-intervention}）。\method{}达到 $0.87$，而八个整体式 VLA/WAM 基线均不超过 $0.09$。同一诊断也定位了本文设计空间中的绑定来源：移除主干 OA 约束（V1）时，尽管槽位感知头保持不变，绑定降至 $0.19$；在启用 OA 的情况下改用均值池化头，绑定也降至 $0.18$。主干约束和可寻址读出必须同时存在。图~\ref{fig:sweeps} 展示了相机偏移扫描、角色查询注意力和俯视轨迹偏转。
+
+
+\section{结论}
+
+\method{}使世界动作建模具备对象可寻址性：一个槽位感知 $7$B 主干通过冻结的逐对象身份地址来路由跨槽位注意力。它在 LIBERO 和 SimplerEnv 上领先，并在几何 LIBERO-Plus 轴上达到新的 SOTA（Geo Avg 比 $\pi_{0.5}$ 高 $+4.8$\%）；该偏置也\emph{可验证}：交换绑定为 $0.87$，而每个整体式基线均不超过 $0.09$，OA 隔离会特异性削弱几何轴而几乎不影响 LIBERO。这为构建在场景几何重排但目标身份保持不变时仍稳定的世界动作模型，提供了一条可验证的设计路径。
+
+\paragraph{局限性。} 验证仅在仿真中完成，报告的鲁棒性尚不能证明真实机器人部署可行。冻结 tokenizer 在小型反光、透明、遮挡或运动模糊物体上会失败，导致 Sensor Noise 轴 $-17.1$\% 的差距（槽位提取而非策略失败；附录~\ref{app:failures}）。干扰物一致性损失也假设目标/干扰物之间的耦合较弱。感知耗时约 $\sim\!95$\,ms/帧，而主干+头约 $\sim\!5.6$\,ms（附录~\ref{app:latency}）。
+
+
+\clearpage
+
+\small
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+
+\input{appendix}
+% \clearpage
+% \input{checklist.tex}
+
+\end{document}
