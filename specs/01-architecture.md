@@ -139,14 +139,23 @@ L_total = L_act + 0.5·L_world + 0.04·L_vq + η_c·L_compose + 0.05·L_role
 - **padding slot**: 被排除为被关注对象（mask 为 -∞），且自身不产生输出
 
 ## 训练阶段规格
-### Stage 0（预训练 — 本仓库跳过）
+### Stage 0（论文预训练 — 本仓库不复现）
 - Full 7B 主干从 Chameleon-7B base 热启动，在 2.5T tokens 上重训
 - OA 约束从 step 5k 开始生效（前 5k 步线性退火）
 - ~600k steps, 384×A100-80GB
-- 使用发布的 ckpt-stage0.pt，不复现
+- `ckpt-stage0.pt` 尚未发布；本仓库当前选择 Stage0-mini，若未来 checkpoint 发布，可作为替换初始化重新评估
+
+### Stage0-mini（本仓库替代 warmup）
+- 目的: 在公开 Chameleon-style backbone 上建立 slot-aware 初始化，使其适应 slot embedding、OA key mask/reset、world/VQ 目标
+- Backbone: 冻结 base weights，优先训练 LoRA；不做 7B 全参大规模预训练
+- 可训练: slot adapter、`f_addr`/`f_cnt`、world head、LoRA、可选 SE(3) bias MLP
+- Loss: `L_world + 0.04·L_vq`，不使用 action/compose/role loss
+- 数据: mock sanity → LIBERO cached perception → 可选 OXE/DROID 小子集 cache
+- 验收: world/VQ loss 稳定下降，OA invariant 仍通过，A2 swap diagnostic 或几何 smoke eval 优于 direct-Chameleon/no-OA baseline
+- 报告约束: Stage0-mini 是当前正式工程替代路线，不等价于论文 Stage 0；实验结果必须同时报告 direct baseline 或 no-OA baseline
 
 ### Stage I（L_world only — 本仓库实现 Stage I-lite）
-- 冻结 Stage 0 主干，仅训练 slot adapter + world head（~23.8M）
+- 冻结 released Stage 0 或 Stage0-mini 初始化后的主干，仅训练 slot adapter + world head（~23.8M）
 - 仅使用 L_world 损失
 - 50k steps（参考），8×A100
 - 目的: slot adapter / world head 对齐验证

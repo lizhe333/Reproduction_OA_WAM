@@ -21,3 +21,8 @@
 ### Next drill
 - 跑通数据流
 - 写出 `slot_vector = [addr, content, time, role]` 的 shape 测试和构造逻辑。
+
+## 2026-06-06
+### Today I implemented
+- 确认用微调的方式来处理Chameloen-7b无法识别新维度的token的问题
+- 重新组织stage0-mini 来做一个adapter处理上述问题

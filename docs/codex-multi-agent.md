@@ -43,6 +43,24 @@ Spawn model-surgery to propose the OA invariant tests.
 Wait for both, then give me a human-coding checklist. Do not edit files.
 ```
 
+### Stage0-mini reproduction planning
+```text
+Use subagents in parallel for read-heavy planning only.
+Spawn backbone-integration to check Chameleon reserved IDs, inputs_embeds, position_ids, LoRA target names, and VQ/lm_head compatibility for Stage0-mini.
+Spawn perception-cache to propose the smallest LIBERO cached perception subset needed for Stage0-mini warmup.
+Spawn heads-training to propose the Stage0-mini training loop, losses, checkpoint lineage, and direct-Chameleon baseline.
+Spawn eval-ablation to propose the smallest A1/A2 smoke eval that can show whether Stage0-mini improves OA trends.
+Wait for all agents and summarize a staged human-coding checklist. Do not edit files.
+```
+
+### Stage0-mini correctness review
+```text
+Use learning-coach and test-reviewer.
+Ask learning-coach to check whether I can explain why Stage0-mini is not equivalent to paper Stage 0.
+Ask test-reviewer to inspect the implementation for shape, mask, detach, checkpoint-lineage, and baseline-reporting risks.
+Wait for both and separate learning feedback from code findings.
+```
+
 ### Learning-focused module session
 ```text
 Use the learning-coach agent.

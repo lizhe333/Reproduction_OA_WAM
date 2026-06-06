@@ -1,23 +1,31 @@
 # 项目仪表盘
 
 ## North Star
-先完成机制级 MVE，再扩展到论文级训练与评估。MVE 成功标准不是 LIBERO 高分，而是：
+先完成机制级 MVE，再用 Stage0-mini 替代不可承受的论文 Stage 0，最后扩展到近似实验复现。MVE 成功标准不是 LIBERO 高分，而是：
 - frozen backbone 能通过 `inputs_embeds` 完成 forward；
 - slot adapter + sequence construction shape 正确；
 - OA key mask 和 addr reset hook 的 invariant 有单元测试覆盖；
 - address swap diagnostic 能观测到目标绑定变化。
 
+近似实验复现的当前路线已确定为 Stage0-mini（`ckpt-stage0.pt` 尚未发布）。成功标准不是完全达到论文表格数值，而是：
+- 标准 LIBERO small rollout 可稳定执行并产生非随机成功率；
+- Stage0-mini 后 world/action loss 比直接 Stage II 更稳定；
+- A1 中 full OA 相对 no-key-mask/no-reset 在 A2 swap binding 和几何扰动上出现可测优势；
+- LIBERO-Plus Camera/Robot/Layout 至少呈现与论文同方向的 OA 鲁棒性趋势。
+
 ## Milestones
 | 里程碑 | 状态 | 验收标准 |
 |--------|------|----------|
 | M0: Paper spec freeze | ✅ done | `specs/01-architecture.md` 和 `04-interface-contracts.md` 已填实，三个 Agent 审查完成 |
+| M0.5: Stage0-mini reproduction plan | ✅ done | 明确跳过论文大规模 Stage 0 后的替代训练、评估门槛和 agent 编排 |
 | M1: Mock cache + slot vector | ⬜ pending | 可构造 batch slot cache，并通过 shape/padding 测试 |
 | M2: Sequence construction | ⬜ pending | 可输出 `inputs_embeds`, `attention_mask`, `token_type_ids` |
 | M3: Frozen backbone forward | ⬜ pending | 单 batch 前向成功，hidden state shape 正确 |
 | M4: OA invariant | ⬜ pending | key mask/reset hook 单元测试通过 |
 | M5: Heads + losses | ⬜ pending | world/action loss 可 overfit tiny batch |
 | M6: Address swap diagnostic | ⬜ pending | 可交换 addr 并记录 action/hidden 改变量 |
-| M7: Stage II small run | ⬜ pending | 8 卡或单卡小规模训练日志稳定 |
+| M7: Stage0-mini small run | ⬜ pending | cached LIBERO small cache 上 `L_world + 0.04 L_vq` 稳定下降，OA invariant 仍通过 |
+| M8: Stage II small run | ⬜ pending | 8 卡或单卡小规模训练日志稳定 |
 
 ## 子系统状态
 | 子系统 | 状态 | 负责Agent | 最后更新 |
@@ -27,6 +35,7 @@
 | 实验基准分析 | ✅ done | PaperSpec + Coordinator | 2026-06-05 |
 | 接口契约 | ✅ done | TestReviewer + Coordinator | 2026-06-05 |
 | Backbone 集成分析 | ✅ done | BackboneIntegration | 2026-06-05 |
+| Stage0-mini 复现方案 | ✅ done | Coordinator + LearningCoach | 2026-06-06 |
 | 感知栈 / cache | ⬜ pending | - | - |
 | 序列构造 | ⬜ pending | - | - |
 | OA主干 | ⬜ pending | - | - |
@@ -35,7 +44,8 @@
 | 评测管线 | ⬜ pending | - | - |
 
 ## 当前阻塞
-- 🟡 Backbone 最终确认：推荐 `facebook/chameleon-7b`，待用户确认。M1 可先于确认推进（mock cache + slot vector 不依赖 backbone）。
+- 🟡 Backbone 具体实现确认：Stage0-mini 已确定为当前路线，默认从 `facebook/chameleon-7b` 或等价 Chameleon-style base 热启动；仍需由 BackboneIntegration 确认 reserved IDs、`inputs_embeds`、`position_ids`、LoRA target 和 VQ/lm_head 兼容性。
+- 🟡 Stage0-mini 数据策略：需确定先用 LIBERO-only cache，还是同时准备 OXE/DROID 子集 cache。建议先 LIBERO-only，机制和训练稳定后再扩。
 - 🟡 PDF 文件的 Git 策略：`paper/OA-WAM.pdf` 和 `paper/OA-WAM_cn.pdf` 需移除 Git 跟踪或明确保留。
 
 ## 集成状态
@@ -53,3 +63,6 @@
 | 2026-06-05 | 先做机制级 MVE | 更适合训练代码能力，也更快暴露 OA 实现错误 |
 | 2026-06-05 | 推荐 facebook/chameleon-7b 为目标 backbone | 架构与论文完全一致（32层/4096/32头），inputs_embeds 接口已确认可用，OA 机制与 D 无硬依赖 |
 | 2026-06-05 | M1 可先于 backbone 确定推进 | M1 只涉及 slot vector 构造，不涉及 backbone forward；hidden_size 从配置读取 |
+| 2026-06-06 | 采用 Stage0-mini 作为论文 Stage 0 替代路线 | 用户目标是近似复现实验结果；384xA100 级 Stage 0 不可行，但直接跳过 Stage 0 只适合机制验证 |
+| 2026-06-06 | Stage0-mini 的验收重点放在趋势而非论文绝对分数 | 没有 Stage 0 checkpoint 时不能声称严格复现；应验证 full OA 相对消融在 swap binding 和几何扰动上同方向改善 |
+| 2026-06-06 | 正式选择 Stage0-mini 当前路线 | `ckpt-stage0.pt` 尚未发布；released checkpoint 仅作为未来可选替换，不阻塞当前实现 |
