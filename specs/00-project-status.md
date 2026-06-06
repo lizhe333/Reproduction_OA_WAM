@@ -46,7 +46,6 @@
 ## 当前阻塞
 - 🟡 Backbone 具体实现确认：Stage0-mini 已确定为当前路线，默认从 `facebook/chameleon-7b` 或等价 Chameleon-style base 热启动；仍需由 BackboneIntegration 确认 reserved IDs、`inputs_embeds`、`position_ids`、LoRA target 和 VQ/lm_head 兼容性。
 - 🟡 Stage0-mini 数据策略：需确定先用 LIBERO-only cache，还是同时准备 OXE/DROID 子集 cache。建议先 LIBERO-only，机制和训练稳定后再扩。
-- 🟡 PDF 文件的 Git 策略：`paper/OA-WAM.pdf` 和 `paper/OA-WAM_cn.pdf` 需移除 Git 跟踪或明确保留。
 
 ## Runtime Policy
 - 物理训练服务器由用户确认为 8x RTX 4090 48GB。
@@ -73,3 +72,4 @@
 | 2026-06-06 | 正式选择 Stage0-mini 当前路线 | `ckpt-stage0.pt` 尚未发布；released checkpoint 仅作为未来可选替换，不阻塞当前实现 |
 | 2026-06-06 | M1 先实现 mock perception 和 slot vector，不接 LIBERO | M1-M6 的目标是 shape/invariant；真实 LIBERO cache 等 sequence/trunk/head 基础通过后再接 |
 | 2026-06-06 | Codex 侧验证使用 CPU，真实训练由用户在 8x4090 服务器上启动 | 当前 Codex sandbox 不保证挂载 `/dev/nvidia*`；CPU 单测足以覆盖 M1-M6 的 shape/invariant，GPU 训练另行执行 |
+| 2026-06-06 | `paper/` 加入 `.gitignore` | 论文 PDF/source 作为本地参考材料，不应继续作为实现产物纳入后续提交 |

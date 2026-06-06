@@ -20,6 +20,9 @@ artifacts/
 *.npz
 *.npy
 
+# paper references
+paper/
+
 # python
 __pycache__/
 *.py[cod]
