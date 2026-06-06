@@ -9,10 +9,16 @@
 - 报告时必须区分“机制复现”“Stage0-mini 近似复现”和“论文完整数值复现”。
 
 ## Hardware Assumption
-- 8x RTX 4090 48G
+- 物理训练服务器：8x RTX 4090 48GB
 - 优先 bf16；若当前 PyTorch/4090 环境不稳定，则使用 fp16 + GradScaler
 - 优先 cached perception，避免训练 loop 调 SAM/DINO/Qwen
 - 优先 LoRA/QLoRA + gradient accumulation，不做 7B 全参训练
+
+## Runtime Verification Policy
+- Codex sandbox 默认只负责 CPU 侧实现验证和单元测试。
+- 如果 Codex 内 `nvidia-smi` 或 `/dev/nvidia*` 不可见，不视为训练服务器无 GPU，也不视为 conda 环境失败。
+- GPU 训练、multi-GPU launch、长时间 rollout 由用户在 GPU 可见的终端中执行。
+- Agent 应提供可复制的训练命令、配置检查和日志诊断，但不要求在 Codex sandbox 内直接运行 GPU 训练。
 
 ## Stage 0（论文大规模预训练，不复现）
 | 项 | 设置 |

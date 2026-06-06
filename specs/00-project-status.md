@@ -18,7 +18,7 @@
 |--------|------|----------|
 | M0: Paper spec freeze | ✅ done | `specs/01-architecture.md` 和 `04-interface-contracts.md` 已填实，三个 Agent 审查完成 |
 | M0.5: Stage0-mini reproduction plan | ✅ done | 明确跳过论文大规模 Stage 0 后的替代训练、评估门槛和 agent 编排 |
-| M1: Mock cache + slot vector | ⬜ pending | 可构造 batch slot cache，并通过 shape/padding 测试 |
+| M1: Mock cache + slot vector | ✅ done | 可构造 batch slot cache，并通过 shape/padding 测试 |
 | M2: Sequence construction | ⬜ pending | 可输出 `inputs_embeds`, `attention_mask`, `token_type_ids` |
 | M3: Frozen backbone forward | ⬜ pending | 单 batch 前向成功，hidden state shape 正确 |
 | M4: OA invariant | ⬜ pending | key mask/reset hook 单元测试通过 |
@@ -36,8 +36,8 @@
 | 接口契约 | ✅ done | TestReviewer + Coordinator | 2026-06-05 |
 | Backbone 集成分析 | ✅ done | BackboneIntegration | 2026-06-05 |
 | Stage0-mini 复现方案 | ✅ done | Coordinator + LearningCoach | 2026-06-06 |
-| 感知栈 / cache | ⬜ pending | - | - |
-| 序列构造 | ⬜ pending | - | - |
+| 感知栈 / cache | 🟡 partial | PerceptionCache | 2026-06-06 |
+| 序列构造 | 🟡 partial | SequenceTokenizer | 2026-06-06 |
 | OA主干 | ⬜ pending | - | - |
 | 世界头+动作头 | ⬜ pending | - | - |
 | 训练循环 | ⬜ pending | - | - |
@@ -47,6 +47,11 @@
 - 🟡 Backbone 具体实现确认：Stage0-mini 已确定为当前路线，默认从 `facebook/chameleon-7b` 或等价 Chameleon-style base 热启动；仍需由 BackboneIntegration 确认 reserved IDs、`inputs_embeds`、`position_ids`、LoRA target 和 VQ/lm_head 兼容性。
 - 🟡 Stage0-mini 数据策略：需确定先用 LIBERO-only cache，还是同时准备 OXE/DROID 子集 cache。建议先 LIBERO-only，机制和训练稳定后再扩。
 - 🟡 PDF 文件的 Git 策略：`paper/OA-WAM.pdf` 和 `paper/OA-WAM_cn.pdf` 需移除 Git 跟踪或明确保留。
+
+## Runtime Policy
+- 物理训练服务器由用户确认为 8x RTX 4090 48GB。
+- Codex sandbox 侧默认只跑 CPU 单元测试和 smoke checks；GPU 不可见时不作为环境失败处理。
+- Stage0-mini、Stage II 和 rollout 等 GPU/长时间任务由用户在 GPU 可见终端启动，Agent 提供命令、配置和日志诊断。
 
 ## 集成状态
 - [ ] 感知栈 ↔ 序列构造 接口对齐
@@ -66,3 +71,5 @@
 | 2026-06-06 | 采用 Stage0-mini 作为论文 Stage 0 替代路线 | 用户目标是近似复现实验结果；384xA100 级 Stage 0 不可行，但直接跳过 Stage 0 只适合机制验证 |
 | 2026-06-06 | Stage0-mini 的验收重点放在趋势而非论文绝对分数 | 没有 Stage 0 checkpoint 时不能声称严格复现；应验证 full OA 相对消融在 swap binding 和几何扰动上同方向改善 |
 | 2026-06-06 | 正式选择 Stage0-mini 当前路线 | `ckpt-stage0.pt` 尚未发布；released checkpoint 仅作为未来可选替换，不阻塞当前实现 |
+| 2026-06-06 | M1 先实现 mock perception 和 slot vector，不接 LIBERO | M1-M6 的目标是 shape/invariant；真实 LIBERO cache 等 sequence/trunk/head 基础通过后再接 |
+| 2026-06-06 | Codex 侧验证使用 CPU，真实训练由用户在 8x4090 服务器上启动 | 当前 Codex sandbox 不保证挂载 `/dev/nvidia*`；CPU 单测足以覆盖 M1-M6 的 shape/invariant，GPU 训练另行执行 |

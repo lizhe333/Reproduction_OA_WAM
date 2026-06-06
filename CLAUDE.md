@@ -15,6 +15,17 @@
 - 不追求一开始复现论文数值，先追求机制正确：forward、OA invariant、address swap diagnostic；机制通过后，用 Stage0-mini 替代不可承受的大规模 Stage 0，目标是近似复现实验趋势和部分结果。
 - 不把大数据、缓存、权重、实验输出提交到 Git。
 
+## Default Milestone Workflow
+每个新 milestone（M0、M1、M2 这类项目里程碑）默认采用“Agent 实现 + Human 学习 review”的节奏：
+1. `Scope`: Agent 先读 specs，明确当前 milestone 的输入输出、shape、invariant 和最小验收。
+2. `Build`: Agent 做最小模块实现、CPU shape/invariant 测试、环境或文档更新。
+3. `Handoff`: Agent 更新 `specs/00-project-status.md`，写 handoff，并列出 touched files、测试命令、风险。
+4. `Guided Review`: 用户启用 `learning-coach`，按文件逐段理解代码，重点看维度变化、mask 语义、detach/device/dtype。
+5. `Human Explain-back`: 用户用自己的话解释核心逻辑；Agent 纠正误解并给一个小 drill。
+6. `Close Gate`: 只有当测试通过且用户完成核心 review 后，才进入下一个 milestone。`docs/learning-log.md` 只由用户本人按需要填写，Agent 不直接编辑。
+
+这个流程适合 M1/M2/M3 这类接口、骨架和 shape-heavy 模块。对 OA key mask、addr reset、loss mask、flow target 这类核心张量逻辑，优先改成“Agent 写测试和脚手架，用户亲手补关键实现，Agent review”的模式。
+
 ## Human-Learning Rule
 以下模块优先由人类开发者亲手写 60%-80%，Agent 主要做 review 和测试：
 - attention mask 构造
@@ -40,7 +51,9 @@
 - Stage0-mini: 冻结或 LoRA 化公开 backbone，训练 slot adapter、`f_addr`/`f_cnt`、world head 和必要 LoRA，使主干适应 slot token、OA mask/reset、VQ/world 目标。
 - Stage I-lite: 建议保留，用于 slot adapter + world head 对齐或 small-batch overfit。
 - Stage II: LoRA + action head + full loss 微调。
-- 当前硬件假设：8x RTX 4090 48G；优先 LoRA/QLoRA、gradient accumulation、cached perception。
+- 物理训练服务器：8x RTX 4090 48GB；优先 LoRA/QLoRA、gradient accumulation、cached perception。
+- Codex 执行环境默认只做 CPU 侧开发验证；即使物理服务器有 GPU，Codex sandbox 内可能不可见 `/dev/nvidia*`。不要把 `torch.cuda.is_available()==False` 视为项目环境失败。
+- 真正的 Stage0-mini / Stage II GPU 训练由用户在 GPU 可见的终端中启动；Agent 负责准备代码、配置、CPU smoke tests、训练命令和日志解读。
 
 ## Agent Roles
 - `Coordinator`: 维护状态、阻塞、handoff 和任务粒度。

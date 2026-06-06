@@ -26,3 +26,6 @@
 ### Today I implemented
 - 确认用微调的方式来处理Chameloen-7b无法识别新维度的token的问题
 - 重新组织stage0-mini 来做一个adapter处理上述问题
+
+### I was confused by
+- mock-cache.py看到77行，对于slot中的一些特征和维度变化还是没有太搞懂
