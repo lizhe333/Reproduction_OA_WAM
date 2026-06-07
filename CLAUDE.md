@@ -20,11 +20,23 @@
 1. `Scope`: Agent 先读 specs，明确当前 milestone 的输入输出、shape、invariant 和最小验收。
 2. `Build`: Agent 做最小模块实现、CPU shape/invariant 测试、环境或文档更新。
 3. `Handoff`: Agent 更新 `specs/00-project-status.md`，写 handoff，并列出 touched files、测试命令、风险。
-4. `Guided Review`: 用户启用 `learning-coach`，按文件逐段理解代码，重点看维度变化、mask 语义、detach/device/dtype。
+4. `Guided Review`: 用户启用 `learning-coach`，按文件逐段理解代码，重点看维度变化、mask 语义、detach/device/dtype。讲解必须小步推进：Agent 每次只解释一个连续代码段，解释后暂停，等用户明确说“没有问题 / 下一段 / 继续”再往下讲。
 5. `Human Explain-back`: 用户用自己的话解释核心逻辑；Agent 纠正误解并给一个小 drill。
 6. `Close Gate`: 只有当测试通过且用户完成核心 review 后，才进入下一个 milestone。`docs/learning-log.md` 只由用户本人按需要填写，Agent 不直接编辑。
 
 这个流程适合 M1/M2/M3 这类接口、骨架和 shape-heavy 模块。对 OA key mask、addr reset、loss mask、flow target 这类核心张量逻辑，优先改成“Agent 写测试和脚手架，用户亲手补关键实现，Agent review”的模式。
+
+### Guided Review Memory
+- 逐段代码讲解是 `.codex/agents/learning-coach.toml` 的职责，不另开新的 agent。
+- 当用户说“给我讲解一下 xxx 代码”“解释一下 xxx”“继续讲 xxx”“review xxx”或类似请求时，默认触发 `learning-coach` 的逐段讲解流程。
+- `learning-coach` 每解释一段代码，必须把 review 记录到 `docs/guided-review-memory.md`，包括：文件/行号、用户问题、解释要点、用户是否已确认、遗留问题。
+- `docs/guided-review-memory.md` 是 Agent 可写的工作记忆；`docs/learning-log.md` 仍只由用户本人维护。
+- 用户没有明确确认前，`learning-coach` 不继续解释下一段代码，也不推进下一个 milestone。
+
+### Learning Profile
+- `docs/developer-learning-profile.md` 是 Agent 可写的学习画像，用来调整讲解节奏、任务拆分和测试重点。
+- 当前默认教学策略：一个代码段一个概念；先给玩具 shape，再讲真实代码；明确区分 category id、bool mask、token id、continuous embedding；每段只问一个 explain-back。
+- 进入 M2/M4/M5 这类核心张量模块前，先由 `learning-coach` 做概念微课和小练习，再由实现 agent 写测试/脚手架或让用户亲手补关键张量逻辑。
 
 ## Human-Learning Rule
 以下模块优先由人类开发者亲手写 60%-80%，Agent 主要做 review 和测试：

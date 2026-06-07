@@ -51,6 +51,3 @@ Codex-side validation is CPU-first. The physical training server is assumed to b
 - `handoffs/`: task handoffs and implementation notes.
 - `tests/`: focused CPU tests for shapes and invariants.
 
-## Git Hygiene
-
-Do not commit datasets, generated caches, checkpoints, or experiment outputs. The local `paper/` folder is ignored because paper PDFs and source files are reference material rather than project implementation artifacts.

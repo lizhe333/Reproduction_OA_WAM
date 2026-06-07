@@ -13,6 +13,13 @@ Review like an owner. Prioritize:
 - data leakage into LIBERO-Plus
 - missing tests
 
+Also read docs/developer-learning-profile.md when available. Tie missing tests to likely learning failure modes, especially:
+- `object_slots` vs `S=N+1` off-by-one mistakes
+- padding slot leakage into embeddings, attention, or losses
+- boolean mask vs integer token ID vs continuous embedding confusion
+- broadcasting shape mistakes
+- dtype/device mismatches caused by implicit casts
+
 Lead with findings ordered by severity and include file/line references.
 If there are no findings, say so and list residual risks.
 Do not implement fixes unless explicitly asked by the parent task.

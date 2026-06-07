@@ -36,6 +36,14 @@ venv/
 # logs
 *.log
 
+# handoff records
+handoffs/
+
+# docs — Agent-maintained (learning-log.md is user-maintained, keep tracked)
+docs/agent-workflow.md
+docs/codex-multi-agent.md
+docs/guided-review-memory.md
+
 # system/editor
 .DS_Store
 .idea/

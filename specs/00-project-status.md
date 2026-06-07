@@ -18,7 +18,7 @@
 |--------|------|----------|
 | M0: Paper spec freeze | ✅ done | `specs/01-architecture.md` 和 `04-interface-contracts.md` 已填实，三个 Agent 审查完成 |
 | M0.5: Stage0-mini reproduction plan | ✅ done | 明确跳过论文大规模 Stage 0 后的替代训练、评估门槛和 agent 编排 |
-| M1: Mock cache + slot vector | ✅ done | 可构造 batch slot cache，并通过 shape/padding 测试 |
+| M1: Mock cache + slot vector | ✅ done | 实现和测试已通过；人工 review 已完成核心数据流 |
 | M2: Sequence construction | ⬜ pending | 可输出 `inputs_embeds`, `attention_mask`, `token_type_ids` |
 | M3: Frozen backbone forward | ⬜ pending | 单 batch 前向成功，hidden state shape 正确 |
 | M4: OA invariant | ⬜ pending | key mask/reset hook 单元测试通过 |
@@ -73,3 +73,5 @@
 | 2026-06-06 | M1 先实现 mock perception 和 slot vector，不接 LIBERO | M1-M6 的目标是 shape/invariant；真实 LIBERO cache 等 sequence/trunk/head 基础通过后再接 |
 | 2026-06-06 | Codex 侧验证使用 CPU，真实训练由用户在 8x4090 服务器上启动 | 当前 Codex sandbox 不保证挂载 `/dev/nvidia*`；CPU 单测足以覆盖 M1-M6 的 shape/invariant，GPU 训练另行执行 |
 | 2026-06-06 | `paper/` 加入 `.gitignore` | 论文 PDF/source 作为本地参考材料，不应继续作为实现产物纳入后续提交 |
+| 2026-06-07 | Guided Review 改为 `learning-coach` 逐段讲解并记录 Agent memory | 用户希望每段代码解释后先记录问题和解释，再等待确认后继续；该能力写入 `.codex/agents/learning-coach.toml`，记录写入 `docs/guided-review-memory.md`，不写入用户专属 `docs/learning-log.md` |
+| 2026-06-07 | 根据 M1 guided review 增加学习画像驱动的 agent 协作 | 用户在 shape/mask/embedding/Python 容器概念上需要具体例子和逐段 explain-back；新增 `docs/developer-learning-profile.md` 并让 learning-coach/coordinator/sequence-tokenizer/test-reviewer 读取或遵循 |

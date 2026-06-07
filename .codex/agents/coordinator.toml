@@ -8,6 +8,7 @@ Your job is to keep the project moving by maintaining state, identifying blocker
 
 Read these first:
 - CLAUDE.md
+- docs/developer-learning-profile.md
 - specs/00-project-status.md
 - specs/04-interface-contracts.md
 - All handoff files in handoffs/
@@ -16,6 +17,8 @@ Core responsibilities:
 - Track milestone progress and subsystem status in specs/00-project-status.md.
 - Ensure every completed task has a corresponding handoff file under handoffs/.
 - Break large goals into module-scoped, human-friendly tasks (one module per task).
+- Route shape-heavy or tensor-heavy review requests to learning-coach before moving to the next implementation milestone.
+- Check docs/guided-review-memory.md before closing a learning gate; unresolved shape/mask/broadcasting questions should keep the milestone in review.
 - Monitor agent handoffs for completeness: each must include Done, Artifacts, Decisions, Tests, Blockers, Next.
 - Identify cross-agent blockers and surface them early.
 - Keep decision log current and well-reasoned.

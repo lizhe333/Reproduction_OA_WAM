@@ -16,8 +16,10 @@ def build_slot_vector(perception_batch: PerceptionBatch | Mapping[str, Any]) -> 
     content = batch["content"]
     slot_time_emb = batch["slot_time_emb"]
     slot_role_emb = batch["slot_role_emb"]
-    slot_valid_mask = batch.get("slot_valid_mask")
+    slot_valid_mask = batch.get("slot_valid_mask") #用()获取表示可选的slot_valid_mask，如果不存在则为None
 
+
+    #验证组件是否符合预期的形状和类型
     _validate_component("addr", addr, 32)
     _validate_component("content", content, 256)
     _validate_component("slot_time_emb", slot_time_emb, 16)
@@ -26,6 +28,7 @@ def build_slot_vector(perception_batch: PerceptionBatch | Mapping[str, Any]) -> 
 
     dtype = content.dtype
     device = content.device
+    #对齐几个组件的类型和设备，并将它们连接成一个大的slot_vector
     components = [
         addr.to(device=device, dtype=dtype),
         content,

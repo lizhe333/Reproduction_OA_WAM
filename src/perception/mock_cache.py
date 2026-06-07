@@ -92,10 +92,10 @@ class MockPerceptionCache:
 
 
         #与生成slot嵌入
-        slot_time_emb = _sinusoidal_time_embedding(frames, slots, cfg.dtype)
-        slot_time_emb = slot_time_emb.unsqueeze(0).expand(bsz, frames, slots, 16).clone()
+        slot_time_emb = _sinusoidal_time_embedding(frames, slots, cfg.dtype) #先生成[T,S,16]的时间嵌入，主要编码的是在第几帧
+        slot_time_emb = slot_time_emb.unsqueeze(0).expand(bsz, frames, slots, 16).clone() #[B,T,S,16],每个batch共用一套deterministic时间编码
         slot_time_emb = slot_time_emb * valid_float
-        slot_role_emb = _role_embedding(slot_role_ids).to(dtype=cfg.dtype)
+        slot_role_emb = _role_embedding(slot_role_ids).to(dtype=cfg.dtype) #每个slot得到一个很小的表，输出[B,T,S,16],告诉后续的slot adapter这个slot是robot还是object
         slot_role_emb = slot_role_emb * valid_float
 
         text_t1_noun_ids = torch.randint(
@@ -113,10 +113,10 @@ class MockPerceptionCache:
         )
         state_input_ids = torch.randint(
             15500, 16001, (bsz, frames, 7), generator=generator, dtype=torch.long
-        )
+        )#7对应机器人proprio的7个维度
         action_input_ids = torch.randint(
             10000, 15005, (bsz, max(frames - 1, 0), 7), generator=generator, dtype=torch.long
-        )
+        ) #中间的维度是T-1，因为history action是帧与帧之间的动作
         sam_masks = torch.rand(
             (bsz, frames, slots, cfg.mask_height, cfg.mask_width), generator=generator
         ) > 0.5
@@ -146,16 +146,20 @@ class MockPerceptionCache:
     def _valid_object_counts(config: MockPerceptionConfig) -> tuple[int, ...]:
         if config.valid_object_counts is None:
             default_count = max(config.object_slots - 1, 0)
-            return tuple(default_count for _ in range(config.batch_size))
+            return tuple(default_count for _ in range(config.batch_size)) #给每个bs都生成default_count
         if len(config.valid_object_counts) != config.batch_size:
             raise ValueError("valid_object_counts must match batch_size")
+        
         for count in config.valid_object_counts:
+            #检查输入的每个样本的物体数是否合法，不能为负数，也不能超过object_slots
             if count < 0 or count > config.object_slots:
                 raise ValueError("valid object count must be in [0, object_slots]")
         return config.valid_object_counts
 
 
 def _sinusoidal_time_embedding(frames: int, slots: int, dtype: torch.dtype) -> torch.Tensor:
+    #偶数维 sin(frame_index*frequency)
+    #奇数维: cos(frame_index*frequency)
     positions = torch.arange(frames, dtype=torch.float32).unsqueeze(1)
     dims = torch.arange(0, 16, 2, dtype=torch.float32)
     div_term = torch.exp(-torch.log(torch.tensor(10000.0)) * dims / 16)
@@ -166,6 +170,7 @@ def _sinusoidal_time_embedding(frames: int, slots: int, dtype: torch.dtype) -> t
 
 
 def _role_embedding(slot_role_ids: torch.Tensor) -> torch.Tensor:
+    #将role_id变成role_embedding
     table = torch.zeros((3, 16), dtype=torch.float32)
     table[ROBOT_ROLE_ID, 0] = 1.0
     table[OBJECT_ROLE_ID, 1] = 1.0
