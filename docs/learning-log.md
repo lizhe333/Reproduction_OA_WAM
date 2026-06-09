@@ -29,3 +29,7 @@
 
 ### I was confused by
 - mock-cache.py看到77行，对于slot中的一些特征和维度变化还是没有太搞懂
+
+## 2026-06-09
+### Today I implemented
+- 搞懂了具体打包的数据类型中各个tensor的作用

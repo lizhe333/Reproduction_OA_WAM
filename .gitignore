@@ -9,6 +9,15 @@ wandb/
 checkpoints/
 artifacts/
 
+# Claude Code (user-specific / auto-generated)
+.claude/settings.local.json
+.claude/scheduled_tasks.json
+.claude/worktrees/
+.claude/memory/
+
+# Agent runtime
+.agents/
+
 # model/data blobs
 *.pt
 *.pth
@@ -26,12 +35,27 @@ paper/
 # python
 __pycache__/
 *.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tox/
+.nox/
 .venv/
 venv/
 .env
+.conda/
+
+# testing / coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# jupyter
+.ipynb_checkpoints/
 
 # logs
 *.log
@@ -43,8 +67,16 @@ handoffs/
 docs/agent-workflow.md
 docs/codex-multi-agent.md
 docs/guided-review-memory.md
+docs/developer-learning-profile.md
 
-# system/editor
+# system / editor
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+
+# python version
+.python-version

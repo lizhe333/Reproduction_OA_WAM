@@ -37,7 +37,7 @@
 | Backbone 集成分析 | ✅ done | BackboneIntegration | 2026-06-05 |
 | Stage0-mini 复现方案 | ✅ done | Coordinator + LearningCoach | 2026-06-06 |
 | 感知栈 / cache | 🟡 partial | PerceptionCache | 2026-06-06 |
-| 序列构造 | 🟡 partial | SequenceTokenizer | 2026-06-06 |
+| 序列构造 | 🟡 partial | SequenceTokenizer | 2026-06-08 |
 | OA主干 | ⬜ pending | - | - |
 | 世界头+动作头 | ⬜ pending | - | - |
 | 训练循环 | ⬜ pending | - | - |
@@ -75,3 +75,4 @@
 | 2026-06-06 | `paper/` 加入 `.gitignore` | 论文 PDF/source 作为本地参考材料，不应继续作为实现产物纳入后续提交 |
 | 2026-06-07 | Guided Review 改为 `learning-coach` 逐段讲解并记录 Agent memory | 用户希望每段代码解释后先记录问题和解释，再等待确认后继续；该能力写入 `.codex/agents/learning-coach.toml`，记录写入 `docs/guided-review-memory.md`，不写入用户专属 `docs/learning-log.md` |
 | 2026-06-07 | 根据 M1 guided review 增加学习画像驱动的 agent 协作 | 用户在 shape/mask/embedding/Python 容器概念上需要具体例子和逐段 explain-back；新增 `docs/developer-learning-profile.md` 并让 learning-coach/coordinator/sequence-tokenizer/test-reviewer 读取或遵循 |
+| 2026-06-08 | M2a 先采用 test-first sequence layout scaffold | 序列构造最容易出现 L 维位置、token type、slot 数量和 ACT_Q 索引错误；先用 toy layout 固化 shape/invariant，再进入实现 |
