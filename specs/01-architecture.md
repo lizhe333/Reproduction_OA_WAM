@@ -17,6 +17,61 @@
 
 OA 机制（key mask 仅读前 32 维、addr reset）不依赖特定 hidden_size，可与不同 backbone 适配。slot adapter 和预测头需从 backbone config 读取 D 以匹配维度。
 
+### 本地 Backbone 路径与加载
+
+| 项目 | 值 |
+|------|-----|
+| HF 模型名 | `facebook/chameleon-7b` |
+| 本地路径 | `/data/cache/models/chameleon-7b` |
+| 磁盘占用 | ~14 GB（3 个 safetensors 分片） |
+| HF 缓存路径 | `/data/cache/huggingface/hub/models--facebook--chameleon-7b/` |
+| Transformers 源码 | `/home/lizhe/.local/lib/python3.10/site-packages/transformers/models/chameleon/modeling_chameleon.py` |
+
+关键源码位置（行号可能随 transformers 版本漂移）：
+
+| 类/函数 | 文件 | 大致行号 |
+|---------|------|----------|
+| `ChameleonModel.forward` | `modeling_chameleon.py` | L915 |
+| `ChameleonForConditionalGeneration.forward` | `modeling_chameleon.py` | L1055 |
+| `ChameleonAttention.forward` | `modeling_chameleon.py` | L312 |
+| `eager_attention_forward`（mask additive 逻辑） | `modeling_chameleon.py` | L217 |
+| `ChameleonDecoderLayer.forward` | `modeling_chameleon.py` | L380 |
+| `create_causal_mask` | `transformers/masking_utils.py` | L727 |
+
+验证下载完整性：
+```bash
+du -sh /data/cache/models/chameleon-7b          # 预期 ~14G
+ls /data/cache/models/chameleon-7b/*.safetensors | wc -l  # 预期 3
+```
+
+Python 加载示例：
+```python
+import torch
+from transformers import ChameleonForConditionalGeneration
+
+model = ChameleonForConditionalGeneration.from_pretrained(
+    "/data/cache/models/chameleon-7b",   # 或 "facebook/chameleon-7b"
+    torch_dtype=torch.float16,           # 或 bfloat16
+    device_map="auto",
+)
+
+# inputs_embeds forward（M3 关键接口）:
+# model.model.forward(inputs_embeds=embeds, attention_mask=mask_4d)
+#   → BaseModelOutputWithPast(last_hidden_state=[B,L,4096], ...)
+#
+# mask 格式: additive 4D [B,1,L,L], 0=allow, -inf=block
+# 源码位置: eager_attention_forward L231-233
+#   attn_weights = attn_weights + causal_mask
+```
+
+下载方式（如需重新下载）：
+```bash
+# 注意: gated model 需要先在 https://huggingface.co/facebook/chameleon-7b 同意许可
+# 如果 HF_ENDPOINT 指向镜像站，gated model 鉴权可能失败，需临时切回官方站:
+HF_ENDPOINT=https://huggingface.co hf download facebook/chameleon-7b \
+  --local-dir /data/cache/models/chameleon-7b
+```
+
 ## 系统概览
 数据流：
 1. `Dataset` 读取 RGB、proprio、历史动作、语言、未来动作块。
