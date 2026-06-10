@@ -19,7 +19,7 @@
 | M0: Paper spec freeze | ✅ done | `specs/01-architecture.md` 和 `04-interface-contracts.md` 已填实，三个 Agent 审查完成 |
 | M0.5: Stage0-mini reproduction plan | ✅ done | 明确跳过论文大规模 Stage 0 后的替代训练、评估门槛和 agent 编排 |
 | M1: Mock cache + slot vector | ✅ done | 实现和测试已通过；人工 review 已完成核心数据流 |
-| M2: Sequence construction | ⬜ pending | 可输出 `inputs_embeds`, `attention_mask`, `token_type_ids` |
+| M2: Sequence construction | 🟡 partial | 可输出 `inputs_embeds`, `attention_mask_4d`, `token_type_ids`；CPU shape/invariant 测试已通过，待 M2 close review |
 | M3: Frozen backbone forward | ⬜ pending | 单 batch 前向成功，hidden state shape 正确 |
 | M4: OA invariant | ⬜ pending | key mask/reset hook 单元测试通过 |
 | M5: Heads + losses | ⬜ pending | world/action loss 可 overfit tiny batch |
@@ -37,7 +37,7 @@
 | Backbone 集成分析 | ✅ done | BackboneIntegration | 2026-06-05 |
 | Stage0-mini 复现方案 | ✅ done | Coordinator + LearningCoach | 2026-06-06 |
 | 感知栈 / cache | 🟡 partial | PerceptionCache | 2026-06-06 |
-| 序列构造 | 🟡 partial | SequenceTokenizer | 2026-06-08 |
+| 序列构造 | 🟡 partial | SequenceTokenizer | 2026-06-10 |
 | OA主干 | ⬜ pending | - | - |
 | 世界头+动作头 | ⬜ pending | - | - |
 | 训练循环 | ⬜ pending | - | - |
@@ -76,3 +76,6 @@
 | 2026-06-07 | Guided Review 改为 `learning-coach` 逐段讲解并记录 Agent memory | 用户希望每段代码解释后先记录问题和解释，再等待确认后继续；该能力写入 `.codex/agents/learning-coach.toml`，记录写入 `docs/guided-review-memory.md`，不写入用户专属 `docs/learning-log.md` |
 | 2026-06-07 | 根据 M1 guided review 增加学习画像驱动的 agent 协作 | 用户在 shape/mask/embedding/Python 容器概念上需要具体例子和逐段 explain-back；新增 `docs/developer-learning-profile.md` 并让 learning-coach/coordinator/sequence-tokenizer/test-reviewer 读取或遵循 |
 | 2026-06-08 | M2a 先采用 test-first sequence layout scaffold | 序列构造最容易出现 L 维位置、token type、slot 数量和 ACT_Q 索引错误；先用 toy layout 固化 shape/invariant，再进入实现 |
+| 2026-06-09 | M2b 拆为 embedding/scatter helper，scatter 采用 Human-first 实现 | `inputs_embeds` 和 slot scatter 是核心张量逻辑；先固化接口与 invariant 测试，再由用户亲手补关键索引写入 |
+| 2026-06-10 | M2c 先采用 boolean 4D attention mask 测试脚手架 | attention mask 是核心张量逻辑；先固化 `[B,1,L,L]` query/key 语义、causal、同帧 slot 双向、padding key 排除和 action/slot 单向规则，再由用户亲手补实现 |
+| 2026-06-10 | M2c mask 实现采用分层覆盖顺序 | 先构造 base causal mask，再打开同帧 valid slot 双向可见，最后关闭 padding slot key 列；action/slot 单向性由当前 layout 顺序和 causal 规则覆盖 |

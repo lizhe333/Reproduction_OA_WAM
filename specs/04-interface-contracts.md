@@ -52,13 +52,32 @@
 ## 感知栈 → 序列构造
 `SequenceTokenizer.forward(perception_batch) -> SequenceBatch`
 
+M2 可分阶段实现：
+- M2a: `SequenceTokenizer.forward(...)` 只构造 `input_ids`、`token_type_ids`、位置表和透传 masks/cache。
+- M2b: `build_sequence_embeddings(sequence_batch, perception_batch, embed_tokens, slot_adapter) -> SequenceBatch` 基于 M2a layout 构造 `slot_vector`、`slot_embeds` 和 `inputs_embeds`，但不构造 attention mask。
+- M2c: `build_sequence_attention_mask(sequence_batch) -> SequenceBatch` 基于 M2a layout 构造 boolean `attention_mask_4d`；backend-specific `attention_mask` 在 M3 接具体 backbone 时适配。
+
+M2b 约束：
+- `embed_tokens(input_ids)` 必须输出 `[B,L,D]`。
+- `slot_adapter(slot_vector)` 必须输出 `[B,T,S,D]`。
+- 对每个 `(b,t,s)`，`inputs_embeds[b, slot_positions[b,t,s], :] == slot_embeds[b,t,s,:]`。
+- 非 slot 位置必须保持为 `embed_tokens(input_ids)` 的结果。
+
+M2c 约束：
+- `attention_mask_4d` 使用 bool 语义，shape 为 `[B,1,L,L]`。
+- `attention_mask_4d[b,0,query_pos,key_pos] == True` 表示 query token 可读取 key/value token。
+- 基础规则为 causal：`key_pos <= query_pos` 可见，未来位置默认不可见。
+- 同一帧内 valid slot token 双向可见，即同一 `slot_positions[b,t,:]` 中的 valid slot 可互相读取。
+- padding slot 作为 key 时不可被任何 token 读取。
+- action token / `[ACT_Q]` 可读取历史上下文和 valid slot；slot token 不可读取 action token，避免 world-side slot hidden 被动作侧信息污染。
+
 ### `SequenceBatch`
 | key | shape | dtype | 说明 |
 |-----|-------|-------|------|
 | `input_ids` | `[B,L]` | int64 | 包含 `⟨slot⟩` 和 `[ACT_Q]` |
 | `inputs_embeds` | `[B,L,D]` | bf16/fp16/fp32 | slot scatter 后 embedding |
 | `attention_mask` | backend-specific | bool/float | block causal + slot rules（见下） |
-| `attention_mask_4d` | `[B,1,L,L]` | bool/float | 显式 4D mask：block causal + slot intra-frame bidirectional + slot→action unidirectional |
+| `attention_mask_4d` | `[B,1,L,L]` | bool | 显式 4D mask；`True` 表示 query 可读取 key。M2c 内部规范使用 bool，M3 再转换为目标 backbone 所需格式 |
 | `token_type_ids` | `[B,L]` | int64 | TEXT_T1/TEXT_T2/VQ/SLOT/STATE/ACTION/SPECIAL |
 | `slot_positions` | `[B,T,S]` | int64 | 每个 slot 在 L 维序列的位置 |
 | `act_q_position` | `[B]` | int64 | `[ACT_Q]` 位置 |

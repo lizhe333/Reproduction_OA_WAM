@@ -10,6 +10,8 @@ from .sequence import (
     TokenType,
 )
 from .slot_vector import build_slot_vector
+from .embeddings import build_sequence_embeddings
+from .masks import build_sequence_attention_mask
 
 __all__ = [
     "ACT_Q_TOKEN_ID",
@@ -22,4 +24,6 @@ __all__ = [
     "SequenceTokenizer",
     "TokenType",
     "build_slot_vector",
+    "build_sequence_embeddings",
+    "build_sequence_attention_mask",
 ]

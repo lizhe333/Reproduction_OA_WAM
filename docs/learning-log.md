@@ -33,3 +33,25 @@
 ## 2026-06-09
 ### Today I implemented
 - 搞懂了具体打包的数据类型中各个tensor的作用
+
+## 2026-06-10
+### Today I implemented
+- 完成了M2模块，将各个数据类型打包成 sequence_batch 并可以将slot和padding区分，构建了 attention_mask_4d，修改了注意力规则。
+- 关键 shape
+- input_ids/token_type_ids:[B,L]
+- slot_positions:[B,T,S],值是L维当中的位置
+- inputs_embeds:[B,L,D]
+- attention_mask_4d :[B,1,L,L]
+- 关键 invariant：
+    - inputs_embeds[b, slot_positions[b,t,s], :] ==        slot_embeds[b,t,s,:]
+    - mask[b,0,query_pos,key_pos] 中 True 表示 query 可以读 key
+    - padding slot 作为 key 时整列必须为 False
+    - action 可以读 slot，但 slot 不能读 action
+  1. M2a 产出 sequence layout metadata：input_ids [B,L]、token_type_ids [B,L]、
+     slot_positions [B,T,S]、act_q_position [B]。
+
+  2. M2b 产出 embedding：slot_vector [B,T,S,320]、slot_embeds [B,T,S,D]、
+     inputs_embeds [B,L,D]。
+
+  3. M2c 产出 attention_mask_4d [B,1,L,L]，True 表示 query 可以读 key。
+  4. M3 backbone 核心吃 inputs_embeds 和 attention mask。
