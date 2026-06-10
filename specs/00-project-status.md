@@ -19,8 +19,8 @@
 | M0: Paper spec freeze | ✅ done | `specs/01-architecture.md` 和 `04-interface-contracts.md` 已填实，三个 Agent 审查完成 |
 | M0.5: Stage0-mini reproduction plan | ✅ done | 明确跳过论文大规模 Stage 0 后的替代训练、评估门槛和 agent 编排 |
 | M1: Mock cache + slot vector | ✅ done | 实现和测试已通过；人工 review 已完成核心数据流 |
-| M2: Sequence construction | 🟡 partial | 可输出 `inputs_embeds`, `attention_mask_4d`, `token_type_ids`；CPU shape/invariant 测试已通过，待 M2 close review |
-| M3: Frozen backbone forward | ⬜ pending | 单 batch 前向成功，hidden state shape 正确 |
+| M2: Sequence construction | ✅ done | 已提交 `0995c59 complete M2`；`inputs_embeds`, `attention_mask_4d`, `token_type_ids` 输出和 CPU shape/invariant 测试通过 |
+| M3: Frozen backbone forward | 🟡 preflight | tiny Chameleon 随机配置已确认 `inputs_embeds` forward、4D mask passthrough、hidden state shape；待实现 wrapper 测试 |
 | M4: OA invariant | ⬜ pending | key mask/reset hook 单元测试通过 |
 | M5: Heads + losses | ⬜ pending | world/action loss 可 overfit tiny batch |
 | M6: Address swap diagnostic | ⬜ pending | 可交换 addr 并记录 action/hidden 改变量 |
@@ -37,14 +37,14 @@
 | Backbone 集成分析 | ✅ done | BackboneIntegration | 2026-06-05 |
 | Stage0-mini 复现方案 | ✅ done | Coordinator + LearningCoach | 2026-06-06 |
 | 感知栈 / cache | 🟡 partial | PerceptionCache | 2026-06-06 |
-| 序列构造 | 🟡 partial | SequenceTokenizer | 2026-06-10 |
-| OA主干 | ⬜ pending | - | - |
+| 序列构造 | ✅ done | SequenceTokenizer | 2026-06-10 |
+| OA主干 | 🟡 preflight | BackboneIntegration | 2026-06-10 |
 | 世界头+动作头 | ⬜ pending | - | - |
 | 训练循环 | ⬜ pending | - | - |
 | 评测管线 | ⬜ pending | - | - |
 
 ## 当前阻塞
-- 🟡 Backbone 具体实现确认：Stage0-mini 已确定为当前路线，默认从 `facebook/chameleon-7b` 或等价 Chameleon-style base 热启动；仍需由 BackboneIntegration 确认 reserved IDs、`inputs_embeds`、`position_ids`、LoRA target 和 VQ/lm_head 兼容性。
+- 🟡 Backbone 具体实现确认：Stage0-mini 已确定为当前路线，默认从 `facebook/chameleon-7b` 或等价 Chameleon-style base 热启动；`inputs_embeds` forward 和 hidden state shape 已在 tiny Chameleon preflight 中确认，仍需实现 M3 wrapper、明确 M2 bool 4D mask 到 backend mask 的转换测试，并后续确认 reserved IDs、`position_ids`、LoRA target 和 VQ/lm_head 兼容性。
 - 🟡 Stage0-mini 数据策略：需确定先用 LIBERO-only cache，还是同时准备 OXE/DROID 子集 cache。建议先 LIBERO-only，机制和训练稳定后再扩。
 
 ## Runtime Policy
@@ -79,3 +79,5 @@
 | 2026-06-09 | M2b 拆为 embedding/scatter helper，scatter 采用 Human-first 实现 | `inputs_embeds` 和 slot scatter 是核心张量逻辑；先固化接口与 invariant 测试，再由用户亲手补关键索引写入 |
 | 2026-06-10 | M2c 先采用 boolean 4D attention mask 测试脚手架 | attention mask 是核心张量逻辑；先固化 `[B,1,L,L]` query/key 语义、causal、同帧 slot 双向、padding key 排除和 action/slot 单向规则，再由用户亲手补实现 |
 | 2026-06-10 | M2c mask 实现采用分层覆盖顺序 | 先构造 base causal mask，再打开同帧 valid slot 双向可见，最后关闭 padding slot key 列；action/slot 单向性由当前 layout 顺序和 causal 规则覆盖 |
+| 2026-06-10 | M3 先做 frozen forward preflight，不立即下载或微调真实 7B | tiny Chameleon 随机配置足以确认 `inputs_embeds`、attention mask 形状和 hidden state 输出契约；真实 `facebook/chameleon-7b` 在 wrapper smoke 通过后接入，LoRA 留到 Stage0-mini/Stage II |
+| 2026-06-10 | handoff 统一写入日期目录 | 使用 `handoffs/<YYYYMMDD>/<YYYYMMDD>-<agent>-<task>.md`，避免根目录堆积并便于按天回溯 |

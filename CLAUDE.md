@@ -6,7 +6,7 @@
 - 先读本文件，再读 `specs/00-project-status.md` 和 `specs/04-interface-contracts.md`。
 - 如果要改接口，必须先更新 `specs/04-interface-contracts.md`，再改代码。
 - 如果要改训练、评估或消融范围，必须同步更新对应的 `specs/02-training-config.md` 或 `specs/03-experiment-matrix.md`。
-- 每次任务结束必须写 `handoffs/<YYYYMMDD>-<agent>-<task>.md`，并更新 `specs/00-project-status.md`。
+- 每次任务结束必须写 `handoffs/<YYYYMMDD>/<YYYYMMDD>-<agent>-<task>.md`，如果当天目录不存在先创建，并更新 `specs/00-project-status.md`。
 
 ## Work Style
 - 一次只领取一个子系统或一个小模块，避免跨模块大改。
@@ -80,6 +80,8 @@
 - `LearningCoach`: 解释论文和代码，设计练习，反向提问，帮助人类开发者形成自己的理解；不直接替代实现。
 
 ## Handoff Format
+路径规则：`handoffs/<YYYYMMDD>/<YYYYMMDD>-<agent>-<task>.md`。例如 `handoffs/20260610/20260610-backboneintegration-m3-forward-preflight.md`。
+
 每个 handoff 必须包含：
 - Done:
 - Artifacts:
