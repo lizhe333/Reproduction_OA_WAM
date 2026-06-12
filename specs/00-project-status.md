@@ -20,7 +20,7 @@
 | M0.5: Stage0-mini reproduction plan | ✅ done | 明确跳过论文大规模 Stage 0 后的替代训练、评估门槛和 agent 编排 |
 | M1: Mock cache + slot vector | ✅ done | 实现和测试已通过；人工 review 已完成核心数据流 |
 | M2: Sequence construction | ✅ done | 已提交 `0995c59 complete M2`；`inputs_embeds`, `attention_mask_4d`, `token_type_ids` 输出和 CPU shape/invariant 测试通过 |
-| M3: Frozen backbone forward | 🟡 tiny smoke done | 已实现 `SlotAwareTrunk` wrapper：传入 `inputs_embeds`/mask、frozen backbone forward、gather `slot_hidden`/`act_q_hidden`；fake backbone、tiny Chameleon、M2→tiny Chameleon CPU smoke 均通过，待真实 7B smoke |
+| M3: Frozen backbone forward | ✅ done | 已实现 `SlotAwareTrunk` wrapper：传入 `inputs_embeds`/mask、frozen backbone forward、gather `slot_hidden`/`act_q_hidden`；fake backbone、tiny Chameleon、M2→tiny Chameleon CPU smoke、真实 Chameleon-7B 单 batch CPU smoke 均通过 |
 | M4: OA invariant | ⬜ pending | key mask/reset hook 单元测试通过 |
 | M5: Heads + losses | ⬜ pending | world/action loss 可 overfit tiny batch |
 | M6: Address swap diagnostic | ⬜ pending | 可交换 addr 并记录 action/hidden 改变量 |
@@ -38,13 +38,13 @@
 | Stage0-mini 复现方案 | ✅ done | Coordinator + LearningCoach | 2026-06-06 |
 | 感知栈 / cache | 🟡 partial | PerceptionCache | 2026-06-06 |
 | 序列构造 | ✅ done | SequenceTokenizer | 2026-06-10 |
-| OA主干 | 🟡 M3 tiny smoke done | BackboneIntegration | 2026-06-10 |
+| OA主干 | ✅ M3 done | BackboneIntegration | 2026-06-12 |
 | 世界头+动作头 | ⬜ pending | - | - |
 | 训练循环 | ⬜ pending | - | - |
 | 评测管线 | ⬜ pending | - | - |
 
 ## 当前阻塞
-- 🟡 Backbone 具体实现确认：Stage0-mini 已确定为当前路线，默认从 `facebook/chameleon-7b` 或等价 Chameleon-style base 热启动；M3 tiny Chameleon wrapper smoke 已通过，并明确 Chameleon 需要 additive 4D mask（允许为 0，禁止为大负数）；仍需真实 7B 单 batch smoke，并后续确认 reserved IDs、`position_ids`、LoRA target 和 VQ/lm_head 兼容性。
+- 🟡 Backbone 具体实现确认：Stage0-mini 已确定为当前路线，默认从 `facebook/chameleon-7b` 或等价 Chameleon-style base 热启动；M3 fake/tiny/真实 7B wrapper smoke 已通过，并明确 Chameleon 需要 additive 4D mask（允许为 0，禁止为大负数）；后续仍需确认 reserved IDs、`position_ids`、LoRA target 和 VQ/lm_head 兼容性。
 - 🟡 Stage0-mini 数据策略：需确定先用 LIBERO-only cache，还是同时准备 OXE/DROID 子集 cache。建议先 LIBERO-only，机制和训练稳定后再扩。
 
 ## Runtime Policy
@@ -84,3 +84,5 @@
 | 2026-06-10 | M3 wrapper 先用 fake backbone 固化接口和 gather invariant | fake backbone 能精确验证 `inputs_embeds` 而非 `input_ids`、mask adapter hook、`last_hidden_state [B,L,D]` 和 slot/action gather；真实 Chameleon 接入留作下一步 smoke |
 | 2026-06-10 | Chameleon mask adapter 使用 additive 4D mask | HF Chameleon 4D mask 会原样进入 attention 并加到 logits 上；项目 bool `True=allow` 必须转换为允许位置 `0`、禁止位置 `torch.finfo(dtype).min` |
 | 2026-06-10 | M3 tiny Chameleon smoke 通过后再接真实 7B | tiny random Chameleon 已验证 `SlotAwareTrunk` 和 M2 产物可以完成 CPU forward；真实 7B 仍需 license/权重/GPU 环境，作为独立 smoke 处理 |
+| 2026-06-12 | 修复 `oa-wam` 环境 Hugging Face 依赖 metadata 污染 | `huggingface_hub-1.19.0.dist-info` 残留导致 transformers 误判版本；升级到 `huggingface-hub==0.36.2` 并移走残留 metadata 后，M3 Chameleon tests 和全量测试恢复通过 |
+| 2026-06-12 | M3 真实 Chameleon-7B 单 batch smoke 通过 | 使用本地 HF cache 权重、`inputs_embeds`、Chameleon additive 4D mask 和 `SlotAwareTrunk` 完成 CPU forward，输出 `[1,8,4096]`/`[1,1,2,4096]`/`[1,4096]` 且 finite |
